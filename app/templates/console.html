@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .side { display: grid; grid-template-columns: 210px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .side { grid-template-columns: 1fr; } }
+  .usercell { text-align: center; }
+  .usercell .n { font-size: 10.5px; color: var(--mut2); display: block; }
+  .vis-dot { display: inline-block; width: 18px; height: 18px; border-radius: 5px; line-height: 18px; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .vis-dot.yes { background: #064e3b; color: #6ee7b7; }
+  .vis-dot.no { background: #1a2437; color: #475569; }
+  .vis-dot.ovr { background: #0c4a6e; color: #7dd3fc; }
+  .picker { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .picker .row-i { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-bottom: 1px solid #1a2437; font-size: 12.5px; }
+  .picker .row-i:hover { background: #131d2e; }
+  .picker .row-i:last-child { border-bottom: 0; }
+  .mini-poster { width: 34px; height: 22px; object-fit: cover; border-radius: 3px; background: #0d1524; }
+  .ovr-pick { display: flex; gap: 4px; margin-left: auto; }
+  .ovr-pick button { font-size: 11px; padding: 2px 7px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--mut); }
+  .ovr-pick button.on.allow { background: #064e3b; border-color: #065f46; color: #6ee7b7; }
+  .ovr-pick button.on.deny { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
+  .grp-pick { display: flex; flex-wrap: wrap; gap: 7px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="topbar-in">
+      <a class="brand" href="/console">
+        <span class="logo">▶</span>
+        <span>web-player<small>management console</small></span>
+      </a>
+      <span class="spacer"></span>
+      <a class="btn sm ghost" href="/player" target="_blank">open public player ↗</a>
+      <form method="post" action="/console/logout" style="display:inline">
+        <button class="btn sm ghost" type="submit">sign out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-tab="dash">Dashboard</button>
+      <button class="tab" data-tab="media">Media library <span class="count" id="c-media"></span></button>
+      <button class="tab" data-tab="users">Users <span class="count" id="c-users"></span></button>
+      <button class="tab" data-tab="groups">Groups</button>
+      <button class="tab" data-tab="e2">Enigma2 &amp; bouquets</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </div>
+
+    <!-- ============================= DASHBOARD ============================= -->
+    <section id="tab-dash">
+      <div class="stats" id="dash-stats"></div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="card-head"><h3>Needs attention</h3></div>
+        <div id="dash-attention"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>What each user can watch</h3>
+          <span class="spacer"></span>
+          <span class="mut small">computed: global switch ∩ group access ∩ per-item override</span>
+        </div>
+        <div id="dash-visibility"></div>
+      </div>
+    </section>
+
+    <!-- =============================== MEDIA =============================== -->
+    <section id="tab-media" class="hidden">
+      <div class="toolbar">
+        <input type="search" id="m-search" placeholder="Search title, path or url…" aria-label="Search media">
+        <select id="m-kind" aria-label="Filter by kind">
+          <option value="">All kinds</option>
+          <option value="movie">Movies</option>
+          <option value="series">Series</option>
+          <option value="clip">Clips</option>
+          <option value="audio">Audio</option>
+        </select>
+        <select id="m-group" aria-label="Filter by group"><option value="">All groups</option></select>
+        <select id="m-source" aria-label="Filter by source">
+          <option value="">All sources</option>
+          <option value="local">Local file</option>
+          <option value="url">URL</option>
+          <option value="youtube">YouTube</option>
+        </select>
+        <select id="m-play" aria-label="Filter by playability">
+          <option value="">Any delivery</option>
+          <option value="direct">Direct</option>
+          <option value="hls">On-demand HLS</option>
+          <option value="embed">Embed</option>
+        </select>
+        <span class="sep"></span>
+        <button class="btn pri" id="btn-add-media" type="button">+ Add media</button>
+        <button class="btn" id="btn-scan" type="button">Scan media root…</button>
+        <span class="spacer"></span>
+        <span class="mut small" id="m-count"></span>
+      </div>
+
+      <div class="card" style="padding:0;overflow:auto">
+        <table class="tbl" id="m-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="mut small" style="margin-top:10px">
+        “Visible to” shows the <em>computed</em> result per user: <span class="vis-dot yes">✓</span> through the group,
+        <span class="vis-dot ovr">G</span> granted per item, <span class="vis-dot no">·</span> not shared.
+        Click a cell to change the per-item override for that user.
+      </p>
+    </section>
+
+    <!-- =============================== USERS =============================== -->
+    <section id="tab-users" class="hidden">
+      <div class="toolbar">
+        <button class="btn pri" id="btn-add-user" type="button">+ Add user</button>
+        <span class="spacer"></span>
+        <span class="mut small" id="u-count"></span>
+      </div>
+      <div class="card" style="padding:0;overflow:auto">
+        <table class="tbl" id="u-table">
+          <thead>
+            <tr>
+              <th>User</th><th>Role</th><th>Status</th><th>Groups</th>
+              <th>Visible</th><th>Overrides</th><th>Max streams</th><th>Expires</th><th>Last login</th><th style="width:150px"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- =============================== GROUPS =============================== -->
+    <section id="tab-groups" class="hidden">
+      <div class="toolbar">
+        <button class="btn pri" id="btn-add-group" type="button">+ Add group</button>
+        <span class="spacer"></span>
+        <span class="mut small" id="g-count"></span>
+      </div>
+      <div class="card" style="padding:0;overflow:auto">
+        <table class="tbl" id="g-table">
+          <thead><tr><th>Group</th><th>Items</th><th>Users</th><th style="width:150px"></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================= ENIGMA2 ============================== -->
+    <section id="tab-e2" class="hidden">
+      <div class="side">
+        <div class="card">
+          <div class="card-head"><h3>Receivers</h3><span class="spacer"></span>
+            <button class="btn sm" id="btn-add-recv" type="button">+ Add</button></div>
+          <div id="recv-list"></div>
+        </div>
+
+        <div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Bouquet preview</h3>
+              <span class="spacer"></span>
+              <select id="e2-recv" aria-label="Receiver"></select>
+              <button class="btn pri" id="btn-push" type="button">Push to receiver</button>
+            </div>
+            <div id="e2-info" class="mut small" style="margin-bottom:10px"></div>
+            <pre class="code" id="e2-preview"></pre>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>How the bouquet is built</h3></div>
+            <div class="mut small" style="line-height:1.7">
+              <p><b>Service reference</b> <code class="mono">4097:0:1:&lt;sid&gt;:0:0:0:0:0:0:&lt;url&gt;:&lt;name&gt;</code> —
+                 the leading number picks the player on the box (1 = DVB, <b>4097</b> = servicemp3/GStreamer,
+                 5001 = ServiceApp gstplayer, 5002 = ServiceApp/exteplayer3).</p>
+              <p><b>Every colon inside the URL is written <code class="mono">%3a</code></b> — Enigma2 splits the
+                 reference on “:” and a raw colon silently truncates the URL. The display name after the last colon
+                 may not contain a colon at all.</p>
+              <p><b>The SID (4th field) is stable</b> — it is derived from the media id, so the box keeps its
+                 favourites, picons and EPG mapping when the bouquet is regenerated.</p>
+              <p><b><code class="mono">bouquets.tv</code> is edited, never overwritten</b> — our line is replaced,
+                 every other bouquet on the box is kept.</p>
+              <p class="mut2">Based on <span class="mono">birdy1974/vu-movie</span> (src/enigma2/index.js) and
+                 <span class="mono">birdy1974/stalker-proxy-manager</span> (app/services/enigma2_bouquets.py).</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================= SETTINGS ============================= -->
+    <section id="tab-settings" class="hidden">
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3>Server</h3></div>
+          <div class="grid2">
+            <label class="field"><span>Media root on the NAS</span><input type="text" id="s-root" disabled></label>
+            <label class="field"><span>Public base URL</span><input type="text" id="s-base" disabled></label>
+            <label class="field"><span>HLS segment length (s)</span><input type="number" id="s-seg" min="2" max="10"></label>
+            <label class="field"><span>Max concurrent streams</span><input type="number" id="s-streams" min="1" max="10"></label>
+          </div>
+          <div style="margin-top:12px"><label class="field"><span>Transcode profile</span>
+            <select id="s-profile">
+              <option value="vaapi">VAAPI (Intel HD Graphics 500 — H.264 1080p)</option>
+              <option value="software">Software (libx264)</option>
+            </select></label></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Hardware</h3></div>
+          <div id="hw-report" class="mut small"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Docker / DSM</h3></div>
+        <pre class="code"># Container Manager → Project → web-player
+docker compose up -d --build
+# http://&lt;nas-ip&gt;:8088/console   management console (private)
+# http://&lt;nas-ip&gt;:8088/player    public web player</pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toasts"></div>
+<div id="modal-root"></div>
+
+<script src="/static/js/console.js"></script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+# ============================================================================
+# web-player — Synology DS918+ (Container Manager → Project → web-player)
+# ============================================================================
+#
+#   cp .env.example .env      # set WEB_PLAYER_ADMIN_PASSWORD
+#   docker compose up -d --build
+#
+#   http://<nas-ip>:8088            management console (private)
+#   http://<nas-ip>:8088/player     public web player
+#
+# One container only: the database is a SQLite file in the /config volume, so
+# the NAS does not have to run a second container for it.
+# ============================================================================
+
+name: web-player
+
+services:
+  web-player:
+    build: .
+    image: web-player:latest
+    container_name: web-player
+    restart: unless-stopped
+
+    environment:
+      # The web-player user must own the bind mounts, otherwise the media
+      # folder cannot be listed ("PermissionError: '/media'").
+      # On the NAS:  stat -c '%u:%g' /volume1/media
+      PUID: ${PUID:-1026}
+      PGID: ${PGID:-100}
+      WEB_PLAYER_ADMIN_USER: ${WEB_PLAYER_ADMIN_USER:-admin}
+      WEB_PLAYER_ADMIN_PASSWORD: ${WEB_PLAYER_ADMIN_PASSWORD:?set WEB_PLAYER_ADMIN_PASSWORD in .env}
+      WEB_PLAYER_MEDIA_ROOT: ${WEB_PLAYER_MEDIA_ROOT:-/media}
+      WEB_PLAYER_DATA_DIR: ${WEB_PLAYER_DATA_DIR:-/config}
+      # Public base URL, used in the Enigma2 service references.
+      WEB_PLAYER_BASE_URL: ${WEB_PLAYER_BASE_URL:-}
+      # "vaapi" | "software" | "auto"
+      WEB_PLAYER_TRANSCODE: ${WEB_PLAYER_TRANSCODE:-auto}
+      WEB_PLAYER_HLS_SEGMENT: ${WEB_PLAYER_HLS_SEGMENT:-4}
+      WEB_PLAYER_MAX_STREAMS: ${WEB_PLAYER_MAX_STREAMS:-3}
+      TZ: ${TZ:-Europe/Amsterdam}
+
+    ports:
+      - "${WEB_PLAYER_PORT:-8088}:8088"
+
+    volumes:
+      # the media library (read/write: the library scanner only reads, but a
+      # writable mount lets you drop files in from the NAS)
+      - ${WEB_PLAYER_MEDIA_HOST:-/volume1/media}:/media
+      # config + database (back this folder up, that is the whole backup)
+      - web-player-config:/config
+
+    devices:
+      # Intel Quick Sync (DS918+ / Apollo Lake). Remove this block to run
+      # without hardware transcoding — ffmpeg then uses libx264.
+      - /dev/dri:/dev/dri
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8088/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    # The J3455 has 4 GB; keep the container small.
+    mem_limit: ${WEB_PLAYER_MEM_LIMIT:-1g}
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  web-player-config:

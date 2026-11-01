@@ -1,0 +1,15 @@
+{
+  "name": "web-player",
+  "version": "0.1.0",
+  "private": true,
+  "description": "web-player — a private management console and a password-protected public web player for files and links on a Synology NAS, with Enigma2 bouquet output.",
+  "license": "MIT",
+  "scripts": {
+    "mockup": "python3 tools/devserver.py --root mockup --port 8088 --host 0.0.0.0",
+    "mockup:media": "sh tools/make-demo-media.sh",
+    "test": "node tools/mockup-smoke.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.0"
+  }
+}

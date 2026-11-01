@@ -1,0 +1,21 @@
+# generated demo media for the mock-up (see tools/make-demo-media.sh)
+mockup/media/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+
+# local config / secrets
+.env
+*.local.yml
+
+# editors / os
+.DS_Store
+*.swp
+.idea/
+.vscode/

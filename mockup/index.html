@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web-player — mock-up</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  .hero { max-width: 860px; margin: 0 auto; padding: 56px 20px 40px; text-align: center; }
+  .hero h1 { font-size: 34px; margin-bottom: 10px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; max-width: 900px; margin: 30px auto 0; text-align: left; }
+  .entry { display: block; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; color: var(--fg); }
+  .entry:hover { border-color: var(--acc); text-decoration: none; }
+  .entry h3 { margin-bottom: 6px; }
+  .entry .ico { font-size: 26px; }
+  .entry ul { margin: 10px 0 0; padding-left: 18px; color: var(--mut); font-size: 13px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="row" style="justify-content:center;margin-bottom:14px">
+    <span class="logo" style="width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(140deg,#38bdf8,#6366f1);color:#06121f;font-weight:800;font-size:20px">▶</span>
+  </div>
+  <h1>web-player</h1>
+  <p class="mut" style="font-size:16px;max-width:640px;margin:0 auto">
+    A private management console and a password-protected public web player for the files and links
+    on your Synology NAS — with Enigma2 bouquets for the satellite box.
+  </p>
+  <p><span class="badge warn">INTERACTIVE MOCK-UP</span>
+     <span class="mut small">fake data · nothing is written to the NAS</span></p>
+
+  <div class="cards">
+    <a class="entry" href="console.html">
+      <div class="ico">🛠</div>
+      <h3>Management console</h3>
+      <div class="mut small">Private. Media library, users, per-user playlists, outputs, bouquets.</div>
+      <ul>
+        <li>Add local files, URLs and YouTube links</li>
+        <li>Enable/disable each item per user</li>
+        <li>Pick the output: web player and/or Enigma2</li>
+        <li>Preview and push the bouquet file</li>
+      </ul>
+    </a>
+    <a class="entry" href="player.html">
+      <div class="ico">▶</div>
+      <h3>Public web player</h3>
+      <div class="mut small">Password protected. The playlist of the signed-in user only.</div>
+      <ul>
+        <li>Search the playlist</li>
+        <li>Play, pause, skip, fullscreen</li>
+        <li>Jump to any timestamp</li>
+        <li>Resume where you left off</li>
+      </ul>
+    </a>
+    <a class="entry" href="../docs/MOCKUP.md">
+      <div class="ico">📐</div>
+      <h3>Design &amp; data model</h3>
+      <div class="mut small">The document that goes with this mock-up.</div>
+      <ul>
+        <li>Architecture and container layout</li>
+        <li>Proposed database schema</li>
+        <li>Where the schema and the GUI disagree</li>
+        <li>Open decisions</li>
+      </ul>
+    </a>
+  </div>
+</div>
+</body>
+</html>
