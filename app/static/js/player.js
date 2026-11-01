@@ -18,6 +18,7 @@
   let player = null;
   let filter = 'all';
   let jumping = false;
+  let hlsFallback = false;      // already tried the HLS version of this item
 
   function toast(msg, kind) {
     const el = document.createElement('div');
@@ -150,12 +151,38 @@
       remember();
       if ($('#opt-next').checked) move(1);
     });
+    player.on('error', () => {
+      const err = player.error();
+      if (!err) return;
+      if (err.code === 4 && current && current.delivery === 'direct' && !hlsFallback) {
+        /* The browser refused the file (a format or a codec it does not
+         * know). The NAS can serve the very same file as an on-demand HLS
+         * stream — that is what the HLS pipeline is there for. */
+        hlsFallback = true;
+        toast('The browser cannot play this file — switching to the on-demand HLS stream…', 'warn');
+        current = Object.assign({}, current, {
+          delivery: 'hls',
+          src: '/player/stream/' + current.id + '/stream.m3u8',
+          mime: 'application/vnd.apple.mpegurl',
+        });
+        player.src({ src: current.src, type: current.mime });
+        player.play().catch(() => { /* the browser may block the autoplay */ });
+        return;
+      }
+      if (err.code === 4) {
+        toast('This file cannot be played in the browser — ask the administrator '
+          + 'to serve it as an on-demand HLS stream', 'err');
+      } else {
+        toast('Playback failed: ' + (err.message || err.code), 'err');
+      }
+    });
     return player;
   }
 
   function play(item) {
     if (!item) return;
     current = item;
+    hlsFallback = false;
     renderList();
 
     $('#now-title').textContent = item.title;
@@ -197,7 +224,11 @@
 
     const p = ensurePlayer();
     p.poster(item.poster || '');
-    p.src(item.src);
+    /* The type has to be given: the stream URL has no file extension, and
+     * Video.js refuses a source whose type it cannot work out ("No
+     * compatible source was found for this media"). The server knows it. */
+    if (item.mime) p.src({ src: item.src, type: item.mime });
+    else p.src(item.src);
     p.play().catch(() => { /* the browser may block the autoplay */ });
 
     if (item.progress_s && $('#opt-resume').checked && item.duration_s
