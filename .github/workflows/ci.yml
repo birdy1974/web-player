@@ -1,0 +1,93 @@
+# web-player — CI
+#
+# Two jobs on every push and every pull request:
+#
+#   tests — the end-to-end API test and the mock-up smoke test;
+#   image — the real Docker image is built (the check that cannot be done on
+#           a machine without Docker) and, on `main`, published to GitHub
+#           Container Registry as ghcr.io/birdy1974/web-player:latest.
+#
+# The registry step only runs for a push to `main` of this repository, so a
+# pull request from a fork can never publish anything.
+#
+# The DS918+ has an Intel Celeron J3455: x86-64, so the image is built for
+# linux/amd64. An ARM NAS needs linux/arm64 as well — add it to `platforms`.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # ffprobe reads the test clip. The runner image already has ffmpeg, but
+      # the package is named explicitly so the job does not depend on it.
+      - name: install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - run: pip install -r requirements.txt
+      - run: npm ci
+
+      - name: the mock-up smoke test
+        run: npm test
+
+      - name: the end-to-end test
+        run: python tools/test_app.py
+
+  image:
+    name: docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to the registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.title=web-player
+            org.opencontainers.image.description=Management console and public web player for a Synology NAS
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

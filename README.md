@@ -3,6 +3,8 @@
 A private **management console** and a password-protected **public web player** for the files and
 links on a Synology NAS — with **Enigma2 bouquet** output for a satellite box.
 
+[![CI](https://github.com/birdy1974/web-player/actions/workflows/ci.yml/badge.svg)](https://github.com/birdy1974/web-player/actions/workflows/ci.yml)
+
 > **Status:** the interactive mock-up, the design proposal and the application are all in place.
 > See [docs/MOCKUP.md](docs/MOCKUP.md) for the design and the decisions, and
 > [docs/SYNO.md](docs/SYNO.md) for the Synology installation.
@@ -112,6 +114,13 @@ python3 tools/devserver.py --root mockup --port 8088
 npm install && npm test                    # the mock-up (jsdom): both pages, driven
 .venv/bin/python tools/test_app.py         # the application: the whole API, end to end
 ```
+
+Both run in **GitHub Actions** on every push and every pull request
+(`.github/workflows/ci.yml`): the two test suites, and the real Docker image is
+built — the one check that cannot be done on a machine without Docker. On
+`main` the image is published to GitHub Container Registry
+(`ghcr.io/birdy1974/web-player:latest`), so the NAS can pull it instead of
+building it there (see [docs/SYNO.md](docs/SYNO.md) §2.3).
 
 ---
 

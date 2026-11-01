@@ -17,7 +17,11 @@ name: web-player
 services:
   web-player:
     build: .
-    image: web-player:latest
+    # The image to run. The default is the local build; set
+    # WEB_PLAYER_IMAGE=ghcr.io/birdy1974/web-player:latest in .env to pull
+    # the image that GitHub Actions builds on every push to main (much faster
+    # on the NAS than building it there — see docs/SYNO.md).
+    image: ${WEB_PLAYER_IMAGE:-web-player:latest}
     container_name: web-player
     restart: unless-stopped
 

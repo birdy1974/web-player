@@ -65,6 +65,38 @@ sudo docker compose up -d --build
 sudo docker compose logs -f web-player
 ```
 
+### 2.3 Pull the image instead of building it on the NAS (faster)
+
+GitHub Actions builds the image on every push to `main` and publishes it to
+GitHub Container Registry. Pulling it takes seconds; building it on the NAS
+takes several minutes and loads the J3455.
+
+```bash
+cd /volume1/docker/web-player
+cp .env.example .env && vi .env
+# in .env:
+#   WEB_PLAYER_IMAGE=ghcr.io/birdy1974/web-player:latest
+
+sudo docker compose pull
+sudo docker compose up -d
+sudo docker compose logs -f web-player
+```
+
+> **Pull first.** The compose file also carries a `build:` section, so a plain
+> `docker compose up -d` would build the image on the NAS and tag it with the
+> registry name. `docker compose pull` fetches the published image instead.
+
+The image is built for `linux/amd64` — the DS918+ is x86-64, so no
+`--platform` is needed. An ARM NAS needs an `linux/arm64` build as well.
+
+To go back to building on the NAS: empty `WEB_PLAYER_IMAGE` again and run
+`sudo docker compose up -d --build`.
+
+> The package is public: `ghcr.io/birdy1974/web-player`. If the pull answers
+> `denied` or `unauthorized`, the package is private — log in with
+> `sudo docker login ghcr.io` and a GitHub token that has the `read:packages`
+> scope.
+
 ---
 
 ## 3. The media library
