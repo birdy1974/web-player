@@ -24,6 +24,22 @@
   .ovr-pick button.on.allow { background: #064e3b; border-color: #065f46; color: #6ee7b7; }
   .ovr-pick button.on.deny { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
   .grp-pick { display: flex; flex-wrap: wrap; gap: 7px; }
+
+  /* the file browser (explorer) */
+  .browser { display: flex; flex-direction: column; gap: 8px; }
+  .br-top { display: flex; align-items: center; gap: 8px; }
+  .br-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; }
+  .br-crumbs a { color: var(--acc); text-decoration: none; cursor: pointer; }
+  .br-crumbs a:hover { text-decoration: underline; }
+  .br-list { min-height: 240px; max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: #0d1524; }
+  .br-row { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-bottom: 1px solid #16203200; cursor: pointer; font-size: 12.5px; }
+  .br-row:hover { background: #131d2e; }
+  .br-row.on { background: #0d2a3f; box-shadow: inset 2px 0 0 var(--acc); }
+  .br-ic { width: 18px; text-align: center; }
+  .br-nm { flex: 1; min-width: 0; }
+  .br-foot { display: flex; align-items: center; gap: 8px; }
+  .br-err { color: var(--err); padding: 12px; font-size: 12.5px; }
+  .pad { padding: 12px; }
 </style>
 </head>
 <body>
@@ -98,6 +114,7 @@
         </select>
         <span class="sep"></span>
         <button class="btn pri" id="btn-add-media" type="button">+ Add media</button>
+        <button class="btn" id="btn-browse" type="button">📁 Browse files…</button>
         <button class="btn" id="btn-scan" type="button">Scan media root…</button>
         <span class="spacer"></span>
         <span class="mut small" id="m-count"></span>

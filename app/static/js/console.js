@@ -295,6 +295,7 @@
   });
 
   $('#btn-add-media').addEventListener('click', () => editMedia(null));
+  $('#btn-browse').addEventListener('click', () => openLibraryBrowser());
   $('#btn-scan').addEventListener('click', async () => {
     if (!confirm('Scan the media root and add everything that is not in the library yet?')) return;
     const btn = $('#btn-scan');
@@ -317,6 +318,7 @@
       enabled: true, outputs: { web: true, enigma2: false }, sort_order: state.media.length * 10,
     };
     const body = `
+      <div id="f-form">
       <div class="grid2">
         <label class="field"><span>Title</span><input type="text" id="f-title" value="${esc(m.title)}"></label>
         <label class="field"><span>Year</span><input type="number" id="f-year" value="${esc(m.year || '')}"></label>
@@ -335,7 +337,10 @@
           <option value="youtube" ${m.source_type === 'youtube' ? 'selected' : ''}>YouTube</option>
         </select></label>
         <label class="field" id="f-path-wrap"><span>Path inside the media root</span>
-          <input type="text" id="f-path" value="${esc(m.path || '')}" placeholder="movies/aurora-drift.mp4"></label>
+          <div class="row" style="gap:6px;flex-wrap:nowrap">
+            <input type="text" id="f-path" value="${esc(m.path || '')}" placeholder="movies/aurora-drift.mp4">
+            <button class="btn sm" id="f-browse" type="button" title="Pick a file in the media root">📁 browse</button>
+          </div></label>
         <label class="field hidden" id="f-url-wrap"><span>URL</span>
           <input type="url" id="f-url" value="${esc(m.url || '')}" placeholder="https://…"></label>
       </div>
@@ -359,7 +364,9 @@
             <label class="switch"><input type="checkbox" id="f-enabled" ${m.enabled ? 'checked' : ''}><span class="track"></span></label>
             <span class="mut small">off = hidden for everybody</span>
           </div></label>
-      </div>`;
+      </div>
+      </div>
+      <div id="f-browser" class="hidden"></div>`;
 
     const root = modal(isNew ? 'Add media' : 'Edit ' + m.title, body,
       `<button class="btn" data-close>Cancel</button><button class="btn pri" id="f-save">${isNew ? 'Add item' : 'Save'}</button>`, true);
@@ -371,6 +378,35 @@
       $('#f-url-wrap', root).classList.toggle('hidden', s === 'local');
     }
     srcSel.addEventListener('change', syncSource); syncSource();
+
+    /* the file browser picks the path — the form hides while it is open */
+    const panel = browserPanel({
+      onPick: (entry) => {
+        $('#f-path', root).value = entry.path;
+        if (!$('#f-title', root).value.trim()) {
+          $('#f-title', root).value = entry.name.replace(/\.[^.]+$/, '')
+            .replace(/[._]+/g, ' ').trim();
+        }
+        showForm();
+      },
+    });
+    const browserHost = $('#f-browser', root);
+    browserHost.appendChild(panel.el);
+
+    function showForm() {
+      $('#f-form', root).classList.remove('hidden');
+      browserHost.classList.add('hidden');
+      $('#f-save', root).classList.remove('hidden');
+      $('.modal-head h3', root).textContent = isNew ? 'Add media' : 'Edit ' + m.title;
+    }
+    function showBrowser() {
+      $('#f-form', root).classList.add('hidden');
+      browserHost.classList.remove('hidden');
+      $('#f-save', root).classList.add('hidden');
+      $('.modal-head h3', root).textContent = 'Pick a file in the media root';
+      if (!panel.el.dataset.loaded) { panel.el.dataset.loaded = '1'; panel.load(''); }
+    }
+    $('#f-browse', root).addEventListener('click', showBrowser);
 
     $('#f-save', root).addEventListener('click', async () => {
       const body = {
@@ -395,6 +431,192 @@
         toast(isNew ? 'Added ' + body.title : 'Saved ' + body.title, 'ok');
         await refresh();
       } catch (e) { toast(e.message, 'err'); }
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* FILE BROWSER                                                       */
+  /* ------------------------------------------------------------------ */
+  /* An explorer for the media root: folders on top, files below, the
+   * breadcrumbs to jump somewhere else. It is used twice — as a picker for
+   * the "path" field of a media item, and as a way to put files or whole
+   * folders into the library without typing a path. */
+  function browserPanel(opts) {
+    const o = opts || {};
+    const el = document.createElement('div');
+    el.className = 'browser';
+    el.innerHTML = `
+      <div class="br-top">
+        <button class="btn sm" type="button" data-br="up" title="One level up">↑</button>
+        <div class="br-crumbs"></div>
+      </div>
+      <input type="search" class="br-filter" placeholder="Filter this folder…"
+             aria-label="Filter this folder">
+      <div class="br-list"></div>
+      <div class="br-foot"><span class="br-sel mut small">nothing selected</span></div>`;
+
+    const crumbs = $('.br-crumbs', el);
+    const listEl = $('.br-list', el);
+    const filter = $('.br-filter', el);
+    const selLine = $('.br-sel', el);
+    const upBtn = $('[data-br="up"]', el);
+
+    let listing = { path: '', parent: null, breadcrumbs: [], entries: [] };
+    let selected = null;
+
+    async function load(path) {
+      listEl.innerHTML = '<div class="mut small pad">loading…</div>';
+      try {
+        listing = await api('/api/console/browse?path=' + encodeURIComponent(path || ''));
+      } catch (e) {
+        listing = { path: '', parent: null, breadcrumbs: [], entries: [] };
+        listEl.innerHTML = `<div class="br-err">${esc(e.message)}</div>`;
+      }
+      selected = null;
+      renderCrumbs();
+      renderList();
+      update();
+    }
+
+    function renderCrumbs() {
+      const parts = listing.breadcrumbs || [];
+      const crumbHtml = parts.map((b, i) => (
+        `${i ? '<span class="sep">/</span>' : ''}` +
+        `<a href="#" data-crumb="${esc(b.path)}">${esc(b.name)}</a>`
+      )).join('');
+      crumbs.innerHTML = crumbHtml +
+        (listing.truncated ? '<span class="sep">/</span><span class="mut2 small">…</span>' : '');
+      $$('[data-crumb]', crumbs).forEach(a => a.addEventListener('click', (e) => {
+        e.preventDefault();
+        load(a.dataset.crumb);
+      }));
+    }
+
+    function visibleEntries() {
+      const q = filter.value.trim().toLowerCase();
+      const entries = listing.entries || [];
+      return q ? entries.filter(e => e.name.toLowerCase().includes(q)) : entries;
+    }
+
+    function renderList() {
+      const entries = visibleEntries();
+      if (!entries.length) {
+        const any = (listing.entries || []).length;
+        listEl.innerHTML = `<div class="mut small pad">${any
+          ? 'Nothing matches the filter.' : 'This folder is empty.'}</div>`;
+        return;
+      }
+      listEl.innerHTML = entries.map(e => {
+        const icon = e.type === 'dir' ? '📁' : (e.kind === 'audio' ? '🎵'
+          : (e.kind === 'video' ? '🎬' : '📄'));
+        const badge = e.in_library ? '<span class="badge ok">in library</span>' : '';
+        const on = selected && selected.path === e.path ? ' on' : '';
+        return `<div class="br-row${on}" data-path="${esc(e.path)}" data-type="${e.type}"
+                     data-media="${e.media ? '1' : '0'}" title="${esc(e.path)}">
+          <span class="br-ic">${icon}</span>
+          <span class="br-nm trunc">${esc(e.name)}</span>
+          ${badge}
+          <span class="spacer"></span>
+          ${e.type === 'file'
+            ? `<span class="mut small">${fmtSize(e.size)}</span>`
+            : '<span class="mut2 small">folder</span>'}
+        </div>`;
+      }).join('');
+      $$('.br-row', listEl).forEach(row => {
+        const entry = entries.find(x => x.path === row.dataset.path);
+        row.addEventListener('click', () => {
+          selected = (selected && selected.path === entry.path) ? null : entry;
+          renderList();
+          update();
+        });
+        row.addEventListener('dblclick', () => {
+          if (entry.type === 'dir') load(entry.path);
+          else if (entry.media && o.onPick) o.onPick(entry);
+        });
+      });
+    }
+
+    function update() {
+      const s = selected;
+      selLine.textContent = !s ? 'nothing selected'
+        : (s.type === 'dir' ? 'folder: ' + s.path : 'file: ' + s.path);
+      upBtn.disabled = listing.path === '' && !listing.parent;
+      if (o.onChange) o.onChange(selected, panel);
+    }
+
+    filter.addEventListener('input', renderList);
+    upBtn.addEventListener('click', () => {
+      if (listing.parent !== null && listing.parent !== undefined) load(listing.parent);
+    });
+
+    const panel = { el, load, get selected() { return selected; } };
+    return panel;
+  }
+
+  /* The browser as its own window: pick files and folders for the library. */
+  function openLibraryBrowser() {
+    const groupOptions = state.groups
+      .map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+    const root = modal('Browse the media root', '<div id="br-host"></div>',
+      `<span class="mut small">new items go to</span>
+       <select id="br-group"><option value="">— no group —</option>${groupOptions}</select>
+       <span class="spacer"></span>
+       <button class="btn" data-close>Close</button>
+       <button class="btn" id="br-add-folder" disabled>Add the folder</button>
+       <button class="btn pri" id="br-add-file" disabled>Add the file</button>`, true);
+
+    const addFile = $('#br-add-file', root);
+    const addFolder = $('#br-add-folder', root);
+    const groupSel = $('#br-group', root);
+
+    const panel = browserPanel({
+      onChange: (selected) => {
+        addFile.disabled = !(selected && selected.type === 'file' && selected.media);
+        addFolder.disabled = !(selected && selected.type === 'dir');
+      },
+      onPick: (entry) => { addFile.click(); },
+    });
+    $('#br-host', root).appendChild(panel.el);
+    panel.load('');
+
+    addFile.addEventListener('click', async () => {
+      const entry = panel.selected;
+      if (!entry) return;
+      addFile.disabled = true;
+      try {
+        const title = entry.name.replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').trim() || entry.name;
+        await api('/api/console/media', {
+          method: 'POST',
+          body: {
+            title, source_type: 'local', path: entry.path,
+            group_id: groupSel.value ? Number(groupSel.value) : null,
+            output_web: true, output_enigma2: false, enabled: true, delivery: 'auto',
+          },
+        });
+        toast('Added ' + entry.name + ' to the library', 'ok');
+        await refresh();
+        panel.load(panel.selected ? panel.selected.path : '');
+      } catch (e) { toast(e.message, 'err'); }
+      addFile.disabled = false;
+    });
+
+    addFolder.addEventListener('click', async () => {
+      const entry = panel.selected;
+      if (!entry) return;
+      if (!confirm(`Add every media file in “${entry.path}” to the library?`)) return;
+      addFolder.disabled = true;
+      addFolder.textContent = 'adding…';
+      try {
+        const r = await api('/api/console/media/scan', {
+          method: 'POST',
+          body: { folder: entry.path, group_id: groupSel.value ? Number(groupSel.value) : null },
+        });
+        toast(`Added ${r.added} item(s), skipped ${r.skipped}, probed ${r.probed}`, 'ok');
+        await refresh();
+        panel.load(entry.path);
+      } catch (e) { toast(e.message, 'err'); }
+      addFolder.disabled = false;
+      addFolder.textContent = 'Add the folder';
     });
   }
 

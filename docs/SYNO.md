@@ -120,6 +120,24 @@ Then, in the console: **Media library → Scan media root**. Every video file
 that is not in the library yet is added, `ffprobe`d, given a poster frame and
 classified as *direct* (playable as it is) or *HLS* (needs a remux/transcode).
 
+### Picking the files (the file browser)
+
+**Media library → 📁 Browse files…** opens an explorer over the media root:
+folders first, then the files, with the path as breadcrumbs and a filter for
+the folder you are in. What you can do with it:
+
+* **Add the file** — the selected file goes into the library (in the group
+  you pick in the footer). The title comes from the file name.
+* **Add the folder** — every media file in that folder and below it is added.
+* A file that is already in the library is marked *in library*.
+
+The same browser is in the **Add media / Edit media** dialog: the
+**📁 browse** button next to *Path inside the media root* opens it and fills
+the path in when you pick a file — no typing, no guessing.
+
+The browser only ever looks inside the media root (`/media` in the
+container). A path that points outside it is refused.
+
 ### Subtitles
 
 An MKV with soft subtitle tracks is delivered through the **exteplayer3**
