@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -23,12 +24,30 @@ MEDIA = TMP / "media"
 DATA.mkdir(parents=True)
 MEDIA.mkdir(parents=True)
 
-# A small clip so the streaming paths have something to serve.
-SAMPLE = ROOT / "mockup" / "media" / "coffee-and-code.mp4"
-if SAMPLE.exists():
-    shutil.copy(SAMPLE, MEDIA / "clip.mp4")
-else:
-    (MEDIA / "clip.mp4").write_bytes(b"not a real video - the probe will fail, that is fine")
+
+def make_sample(target: Path) -> None:
+    """A small mp4 so the streaming paths have something to serve.
+
+    The demo clips of the mock-up are generated (they are not in the
+    repository), so a plain checkout makes its own: a few seconds of a test
+    pattern. ffprobe then has something real to read — and the poster frame
+    (grabbed at 5 s) is there as well.
+    """
+    sample = ROOT / "mockup" / "media" / "coffee-and-code.mp4"
+    if sample.exists():
+        shutil.copy(sample, target)
+        return
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=8",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+         "-movflags", "+faststart", str(target)],
+        check=False)
+    if not target.exists() or target.stat().st_size == 0:
+        target.write_bytes(b"not a real video - the probe will fail, that is fine")
+
+
+make_sample(MEDIA / "clip.mp4")
 
 os.environ.update({
     "WEB_PLAYER_DATA_DIR": str(DATA),
