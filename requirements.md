@@ -14,3 +14,7 @@ main functionality: USER INTERFACE TO PLAY THE FILES. user can select what file 
 do a deep through search to find a easy to operate web player or base it on:
 https://github.com/birdy1974/vu-movie
 https://github.com/birdy1974/stalker-proxy-manager
+
+give a working mock-up of the web interface before the actual implementation of the code so I can test before compiling everything
+in case you do not understand anything or something is not clear or there are multiple options, you need to ask follow up questions with options to select and the impact on the application.
+please warn me if there is a mismatch between the proposed database structure and the GUI or functionality, identify the problems and give options to make it better
