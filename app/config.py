@@ -56,6 +56,17 @@ SESSION_HOURS = _int("WEB_PLAYER_SESSION_HOURS", 72)
 BASE_URL = os.environ.get("WEB_PLAYER_BASE_URL", "").strip().rstrip("/")
 PUBLIC_URL = os.environ.get("WEB_PLAYER_PUBLIC_URL", "").strip().rstrip("/")
 
+# --- logging -------------------------------------------------------------
+# DEBUG | INFO | WARNING | ERROR — how much the application tells.
+LOG_LEVEL = os.environ.get("WEB_PLAYER_LOG_LEVEL", "INFO").strip().upper() or "INFO"
+# The log file in the data directory. It survives a restart and can be
+# downloaded from the console. Set it to an empty value to write to stdout only.
+LOG_FILE = os.environ.get("WEB_PLAYER_LOG_FILE", str(DATA_DIR / "web-player.log")).strip()
+# How many lines the console keeps in memory (the *Logs* tab).
+LOG_LINES = max(100, _int("WEB_PLAYER_LOG_LINES", 2000))
+# How big the log file may grow before it is rotated (3 files are kept).
+LOG_MAX_BYTES = max(256 * 1024, _int("WEB_PLAYER_LOG_MAX_BYTES", 5 * 1024 * 1024))
+
 TRANSCODE_MODE = os.environ.get("WEB_PLAYER_TRANSCODE", "auto").strip().lower()
 HLS_SEGMENT = max(2, _int("WEB_PLAYER_HLS_SEGMENT", 4))
 MAX_STREAMS = max(1, _int("WEB_PLAYER_MAX_STREAMS", 3))

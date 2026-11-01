@@ -41,6 +41,14 @@ services:
       WEB_PLAYER_TRANSCODE: ${WEB_PLAYER_TRANSCODE:-auto}
       WEB_PLAYER_HLS_SEGMENT: ${WEB_PLAYER_HLS_SEGMENT:-4}
       WEB_PLAYER_MAX_STREAMS: ${WEB_PLAYER_MAX_STREAMS:-3}
+      # How much the application tells: DEBUG | INFO | WARNING | ERROR
+      WEB_PLAYER_LOG_LEVEL: ${WEB_PLAYER_LOG_LEVEL:-INFO}
+      # The log file in the data volume. Set it to an empty value in .env to
+      # write to stdout only (no colon after the name: an empty value has to
+      # stay empty).
+      WEB_PLAYER_LOG_FILE: ${WEB_PLAYER_LOG_FILE-/config/web-player.log}
+      # How many lines the console keeps in memory for the *Logs* tab
+      WEB_PLAYER_LOG_LINES: ${WEB_PLAYER_LOG_LINES:-2000}
       TZ: ${TZ:-Europe/Amsterdam}
 
     ports:
@@ -64,6 +72,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+    # The application writes a lot to stdout (that is what Portainer shows).
+    # Rotate it, so the log of the container cannot fill the NAS.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     # The J3455 has 4 GB; keep the container small.
     mem_limit: ${WEB_PLAYER_MEM_LIMIT:-1g}

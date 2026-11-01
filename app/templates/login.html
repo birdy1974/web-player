@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/static/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/css/app.css">
 <style>
   .login-wrap { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
@@ -15,7 +18,8 @@
 <div class="login-wrap">
   <form class="login-card" method="post" action="{{ action }}">
     <div class="row" style="margin-bottom:6px">
-      <span class="logo" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(140deg,#38bdf8,#6366f1);color:#06121f;font-weight:800">▶</span>
+      <img class="logo" src="/static/brand/web-player.svg" alt="" width="34" height="34"
+           style="width:34px;height:34px;border-radius:9px">
       <div>
         <div style="font-weight:700;font-size:16px">web-player</div>
         <div class="mut small">{{ 'management console' if kind == 'admin' else 'sign in to watch' }}</div>

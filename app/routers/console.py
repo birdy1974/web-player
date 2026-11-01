@@ -10,19 +10,21 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import ADMIN_USER, BASE_URL, MEDIA_ROOT, PUBLIC_URL
+from ..config import (
+    ADMIN_USER, BASE_URL, LOG_LINES, LOG_LEVEL, LOG_MAX_BYTES, MEDIA_ROOT, PUBLIC_URL,
+)
 from ..database import get_db
 from ..models import (
     Bouquet, Group, Media, PlaybackProgress, Receiver, Setting, User, UserGroup,
     UserMedia, outputs_json,
 )
 from ..security import hash_password, new_password, verify_password
-from ..services import enigma2, library, resolver
+from ..services import enigma2, library, logs, resolver
 from ..services.visibility import (
     groups_with_counts, load_visibility, media_row, set_groups, set_override,
     user_row,
@@ -90,6 +92,7 @@ async def console_login(request: Request, db: AsyncSession = Depends(get_db)):
         from ..config import ADMIN_PASSWORD
         ok = bool(ADMIN_PASSWORD) and password == ADMIN_PASSWORD
     if not ok:
+        log.warning("console sign-in refused — user=%r", name)
         return templates.TemplateResponse(request, "login.html", {
             "kind": "admin", "title": "web-player — management console",
             "action": "/console/login", "error": "Wrong username or password.",
@@ -100,12 +103,15 @@ async def console_login(request: Request, db: AsyncSession = Depends(get_db)):
         user.last_login_at = datetime.now(timezone.utc)
         await db.commit()
     request.session["admin"] = name
+    log.info("console signed in — admin=%s", name)
     return RedirectResponse("/console", status_code=302)
 
 
 @router.post("/console/logout")
 async def console_logout(request: Request):
+    name = request.session.get("admin")
     request.session.pop("admin", None)
+    log.info("console signed out — admin=%s", name)
     return RedirectResponse("/console/login", status_code=302)
 
 
@@ -153,6 +159,8 @@ async def overview(request: Request, db: AsyncSession = Depends(get_db)):
         "per_user": per_user,
         "vaapi": __import__("app.services.hls", fromlist=["x"]).vaapi_report(),
         "media_root": str(MEDIA_ROOT),
+        # how much trouble the log holds — the dashboard shows it at a glance
+        "log_counts": logs.counts(),
     }
 
 
@@ -212,6 +220,9 @@ async def create_media(request: Request, db: AsyncSession = Depends(get_db)):
     )
     db.add(item)
     await db.commit()
+    log.info("media added — id=%s title=%r type=%s path=%s url=%s group=%s",
+             item.id, item.title, item.source_type, item.path or "-",
+             (item.url or "-")[:120], item.group_id)
 
     if item.source_type == "youtube":
         await resolver.resolve(db, item, force=True)
@@ -243,6 +254,8 @@ async def update_media(media_id: int, request: Request, db: AsyncSession = Depen
             bool(payload.get("output_enigma2", item.output_enigma2)),
         )
     await db.commit()
+    log.info("media changed — id=%s title=%r enabled=%s delivery=%s outputs=%s",
+             item.id, item.title, item.enabled, item.delivery, item.outputs)
     return {"ok": True}
 
 
@@ -252,8 +265,10 @@ async def delete_media(media_id: int, request: Request, db: AsyncSession = Depen
     item = await db.get(Media, media_id)
     if item is None:
         raise HTTPException(404, "media not found")
+    title = item.title
     await db.delete(item)
     await db.commit()
+    log.info("media deleted — id=%s title=%r", media_id, title)
     return {"ok": True}
 
 
@@ -294,6 +309,9 @@ async def scan_media(request: Request, db: AsyncSession = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     probed = await library.probe_pending(db, limit=200)
+    log.info("scan of %r — added=%s skipped=%s failed=%s probed=%s",
+             payload.get("folder") or "the whole media root",
+             report.get("added"), report.get("skipped"), report.get("failed"), probed)
     return {**report, "probed": probed}
 
 
@@ -304,6 +322,13 @@ async def reprobe(media_id: int, request: Request, db: AsyncSession = Depends(ge
     if item is None:
         raise HTTPException(404, "media not found")
     info = await library.probe_one(db, item)
+    if info is None:
+        log.warning("probe failed — id=%s title=%r path=%s", item.id, item.title, item.path)
+    else:
+        log.info("probe — id=%s title=%r container=%s video=%s audio=%s %sx%s %.1fs",
+                 item.id, item.title, info.get("container"), info.get("video"),
+                 info.get("audio"), info.get("width"), info.get("height"),
+                 info.get("duration_s") or 0)
     return {"ok": info is not None, "probe": info}
 
 
@@ -314,6 +339,11 @@ async def re_resolve(media_id: int, request: Request, db: AsyncSession = Depends
     if item is None:
         raise HTTPException(404, "media not found")
     result = await resolver.resolve(db, item, force=True)
+    if result.get("state") == "resolved":
+        log.info("yt-dlp resolved — id=%s title=%r", item.id, item.title)
+    else:
+        log.warning("yt-dlp could not resolve — id=%s title=%r: %s",
+                    item.id, item.title, result.get("error"))
     return result
 
 
@@ -331,6 +361,8 @@ async def set_item_visibility(media_id: int, request: Request,
     if user is None:
         raise HTTPException(404, "user not found")
     await set_override(db, user_id, media_id, state)
+    log.info("visibility changed — user=%s (%s) media=%s → %s",
+             user.name, user.id, media_id, state or "the group rule")
     return {"ok": True}
 
 
@@ -371,6 +403,9 @@ async def create_user(request: Request, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await set_groups(db, user.id, [int(g) for g in payload.get("group_ids", [])])
+    log.info("user added — id=%s name=%r enabled=%s max_streams=%s expires=%s groups=%s",
+             user.id, user.name, user.enabled, user.max_streams,
+             user.expires_at or "never", payload.get("group_ids") or [])
     return {"id": user.id, "generated_password": None}
 
 
@@ -397,6 +432,9 @@ async def update_user(user_id: int, request: Request, db: AsyncSession = Depends
     await db.commit()
     if "group_ids" in payload:
         await set_groups(db, user.id, [int(g) for g in payload["group_ids"]])
+    log.info("user changed — id=%s name=%r enabled=%s max_streams=%s expires=%s groups=%s",
+             user.id, user.name, user.enabled, user.max_streams,
+             user.expires_at or "never", payload.get("group_ids", "unchanged"))
     return {"ok": True}
 
 
@@ -408,8 +446,10 @@ async def delete_user(user_id: int, request: Request, db: AsyncSession = Depends
         raise HTTPException(404, "user not found")
     if user.role == "admin":
         raise HTTPException(400, "the administrator cannot be deleted")
+    name = user.name
     await db.delete(user)
     await db.commit()
+    log.info("user deleted — id=%s name=%r", user_id, name)
     return {"ok": True}
 
 
@@ -435,6 +475,7 @@ async def create_group(request: Request, db: AsyncSession = Depends(get_db)):
                   sort_order=int(payload.get("sort_order", 0) or 0))
     db.add(group)
     await db.commit()
+    log.info("group added — id=%s name=%r", group.id, group.name)
     return {"id": group.id}
 
 
@@ -452,6 +493,7 @@ async def update_group(group_id: int, request: Request, db: AsyncSession = Depen
     if "sort_order" in payload:
         group.sort_order = int(payload["sort_order"] or 0)
     await db.commit()
+    log.info("group changed — id=%s name=%r", group.id, group.name)
     return {"ok": True}
 
 
@@ -461,9 +503,63 @@ async def delete_group(group_id: int, request: Request, db: AsyncSession = Depen
     group = await db.get(Group, group_id)
     if group is None:
         raise HTTPException(404, "group not found")
+    name = group.name
     await db.delete(group)
     await db.commit()
+    log.info("group deleted — id=%s name=%r", group_id, name)
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------
+# logs
+# --------------------------------------------------------------------------
+@router.get("/api/console/logs")
+async def read_logs(request: Request, db: AsyncSession = Depends(get_db),
+                    level: str = "", search: str = "", limit: int = 300):
+    """The log of the application — the same lines Portainer shows.
+
+    The lines come from a ring buffer in memory, so they are there even
+    when the log file cannot be written (a read-only volume).
+    """
+    await admin_user(db, request)
+    records = logs.records(level=level, search=search, limit=limit)
+    return {
+        "records": records,
+        "counts": logs.counts(),
+        "file": logs.file_info(),
+        "levels": list(logs.LEVELS),
+        "config": {
+            "level": LOG_LEVEL,
+            "lines": LOG_LINES,
+            "max_bytes": LOG_MAX_BYTES,
+            "path": logs.file_info().get("path"),
+        },
+    }
+
+
+@router.get("/api/console/logs/download")
+async def download_logs(request: Request, db: AsyncSession = Depends(get_db)):
+    """The log file itself — for a bug report."""
+    await admin_user(db, request)
+    path = logs.log_path()
+    if path is None or not path.exists():
+        raise HTTPException(404, "there is no log file yet")
+    return FileResponse(
+        str(path), media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{path.name}"',
+                 "Cache-Control": "no-store"})
+
+
+@router.delete("/api/console/logs")
+async def clear_logs(request: Request, db: AsyncSession = Depends(get_db),
+                     file: bool = False):
+    """Empty the buffer — and with `file=1` the log file too."""
+    await admin_user(db, request)
+    removed = logs.clear()
+    truncated = logs.truncate_file() if file else False
+    log.info("the log was cleared by the administrator (buffer=%s, file=%s)",
+             removed, truncated)
+    return {"ok": True, "removed": removed, "truncated": truncated}
 
 
 # --------------------------------------------------------------------------
@@ -510,6 +606,9 @@ async def create_receiver(request: Request, db: AsyncSession = Depends(get_db)):
     )
     db.add(receiver)
     await db.commit()
+    log.info("receiver added — id=%s name=%r host=%s:%s transport=%s service=%s",
+             receiver.id, receiver.name, receiver.host, receiver.port,
+             receiver.transport, receiver.service_type)
     return {"id": receiver.id}
 
 
@@ -532,6 +631,8 @@ async def update_receiver(receiver_id: int, request: Request, db: AsyncSession =
     if payload.get("password"):
         receiver.password = payload["password"]
     await db.commit()
+    log.info("receiver changed — id=%s name=%r host=%s:%s enabled=%s",
+             receiver.id, receiver.name, receiver.host, receiver.port, receiver.enabled)
     return {"ok": True}
 
 
@@ -541,8 +642,10 @@ async def delete_receiver(receiver_id: int, request: Request, db: AsyncSession =
     receiver = await db.get(Receiver, receiver_id)
     if receiver is None:
         raise HTTPException(404, "receiver not found")
+    name = receiver.name
     await db.delete(receiver)
     await db.commit()
+    log.info("receiver deleted — id=%s name=%r", receiver_id, name)
     return {"ok": True}
 
 
@@ -615,11 +718,15 @@ async def push_bouquet(request: Request, db: AsyncSession = Depends(get_db)):
                 password=receiver.password or "", filename=filename,
                 content=content, bouquets_line=line)
     except enigma2.PushError as exc:
+        log.error("bouquet push failed — receiver=%s (%s:%s) via %s: %s",
+                  receiver.name, receiver.host, receiver.port, receiver.transport, exc)
         raise HTTPException(502, str(exc)) from exc
 
     db.add(Bouquet(receiver_id=receiver.id, name=receiver.bouquet_name,
                    filename=filename, item_count=count, payload=content))
     await db.commit()
+    log.info("bouquet pushed — receiver=%s (%s:%s) file=%s items=%s",
+             receiver.name, receiver.host, receiver.port, filename, count)
     return {"ok": True, "entries": count, "filename": filename, **report,
             "reload": enigma2.servicelist_reload_url(receiver.host)}
 

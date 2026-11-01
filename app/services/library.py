@@ -151,9 +151,10 @@ async def probe(path: str | Path) -> dict | None:
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
     except (asyncio.TimeoutError, OSError) as exc:
-        log.warning("ffprobe failed for %s: %s", path, exc)
+        log.warning("ffprobe failed for %s: %s (ffprobe=%s)", path, exc, FFPROBE)
         return None
     if proc.returncode != 0 or not out:
+        log.warning("ffprobe answered nothing for %s (code %s)", path, proc.returncode)
         return None
     try:
         data = json.loads(out.decode("utf-8", "replace"))
@@ -271,6 +272,8 @@ async def scan_root(db: AsyncSession, *, group_id: int | None = None,
             await db.rollback()
             failed += 1
             log.exception("could not add %s", path)
+    log.info("scan of %s — added=%s skipped=%s failed=%s",
+             start, added, skipped, failed)
     return {"added": added, "skipped": skipped, "failed": failed}
 
 
@@ -400,6 +403,8 @@ async def probe_pending(db: AsyncSession, limit: int = 200) -> int:
 async def probe_one(db: AsyncSession, item: Media) -> dict | None:
     path = absolute_path(item)
     if path is None or not path.exists():
+        log.warning("probe skipped — media=%s (%r): the file is gone (%s)",
+                    item.id, item.title, item.path)
         return None
     info = await probe(path)
     if info:
@@ -415,6 +420,11 @@ async def probe_one(db: AsyncSession, item: Media) -> dict | None:
             if poster:
                 item.poster = poster
                 await db.commit()
+    if info:
+        log.info("probed media=%s (%r): container=%s video=%s audio=%s %sx%s %.1fs "
+                 "delivery=%s", item.id, item.title, info.get("container"),
+                 info.get("video"), info.get("audio"), info.get("width"),
+                 info.get("height"), info.get("duration_s") or 0, info.get("delivery"))
     return info
 
 

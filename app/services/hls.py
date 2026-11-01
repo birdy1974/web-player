@@ -188,13 +188,17 @@ async def _start(session: HLSSession, offset: float, video_codec: str | None) ->
         str(session.directory / "index.m3u8"),
     ]
 
-    log.info("hls start: media=%s offset=%.1f mode=%s", session.media_id, offset, mode)
+    log.info("hls start: media=%s user=%s offset=%.1f mode=%s codec=%s source=%s",
+             session.media_id, session.user_id, offset, mode,
+             video_codec or "unknown", session.source)
     try:
         session.proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     except OSError as exc:
         session.failed = f"ffmpeg could not be started: {exc}"
         session.proc = None
+        log.error("hls ffmpeg could not be started for media=%s: %s (ffmpeg=%s)",
+                  session.media_id, exc, FFMPEG)
         return
 
     async def _watch() -> None:
@@ -206,7 +210,8 @@ async def _start(session: HLSSession, offset: float, video_codec: str | None) ->
         if session.proc.returncode not in (0, None):
             message = err.decode("utf-8", "replace").strip().splitlines()
             session.failed = message[-1][:300] if message else "ffmpeg stopped"
-            log.warning("hls ffmpeg for media=%s stopped: %s", session.media_id, session.failed)
+            log.warning("hls ffmpeg for media=%s stopped (code %s): %s",
+                        session.media_id, session.proc.returncode, session.failed)
 
     session.task = asyncio.create_task(_watch())
 
@@ -229,24 +234,34 @@ async def ensure_segment(session: HLSSession, index: int) -> Path | None:
     """Make sure the file for `index` exists, seeking ffmpeg when needed."""
     path = session.segment_path(index)
     if path.exists() and path.stat().st_size > 0:
+        log.debug("hls segment %s for media=%s was already there", index, session.media_id)
         return path
 
     if index < session.start_segment:
         # The client went back before the current window: restart at that
         # segment and let it produce the file again.
+        log.info("hls seek backwards: media=%s segment=%s (from %s)",
+                 session.media_id, index, session.start_segment)
         await _start(session, session.segment_time(index), None)
     elif index > session.start_segment + 1:
         ahead = session.segment_time(index) - session.offset
         if ahead > session.seg_seconds * 3:
+            log.info("hls seek forwards: media=%s segment=%s (from %s, %.1fs ahead)",
+                     session.media_id, index, session.start_segment, ahead)
             await _start(session, session.segment_time(index), None)
 
     # Wait for ffmpeg to write it.
     for _ in range(600):          # 30 s
         if path.exists() and path.stat().st_size > 0:
+            log.info("hls segment ready: media=%s segment=%s (%s bytes)",
+                     session.media_id, index, path.stat().st_size)
             return path
         if session.proc is None or session.proc.returncode is not None:
+            log.warning("hls segment %s for media=%s is not coming (ffmpeg is gone)",
+                        index, session.media_id)
             return None
         await asyncio.sleep(0.05)
+    log.warning("hls segment %s for media=%s took longer than 30 s", index, session.media_id)
     return None
 
 
@@ -276,6 +291,7 @@ async def drop_session(media_id: int, user_id: int | None) -> None:
     if session:
         await _stop_process(session)
         shutil.rmtree(session.directory, ignore_errors=True)
+        log.info("hls session dropped: media=%s user=%s", media_id, user_id)
 
 
 async def reap_idle() -> int:
@@ -286,6 +302,8 @@ async def reap_idle() -> int:
         _sessions.pop(session.key, None)
         await _stop_process(session)
         shutil.rmtree(session.directory, ignore_errors=True)
+        log.info("hls session reaped (idle): media=%s user=%s offset=%.1f",
+                 session.media_id, session.user_id, session.offset)
     return len(dead)
 
 

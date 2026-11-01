@@ -9,6 +9,7 @@ it never touches the real installation.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -432,12 +433,57 @@ def main() -> int:
         data = r.json()
         check(data["media_count"] == 7, f"the dashboard counts the media ({data['media_count']})")
         check(data["user_count"] == 3, f"the dashboard counts the users ({data['user_count']})")
+        check("log_counts" in data, "the dashboard counts the trouble in the log")
+        check(sum(data["log_counts"].values()) > 0, "the log holds the lines of this test run")
 
         print("\n== a disabled user loses access at once ==")
         client.put(f"/api/console/users/{family_id}", json={"enabled": False})
         r = client.get("/api/player/playlist")
         check(r.status_code == 401, f"the disabled account is refused ({r.status_code})")
         client.put(f"/api/console/users/{family_id}", json={"enabled": True})
+
+        print("\n== the log ==")
+        r = client.get("/api/console/logs")
+        check(r.status_code == 200, f"the log answers ({r.status_code})")
+        data = r.json()
+        check(isinstance(data.get("records"), list), "the log brings its lines")
+        check(bool(data.get("records")), f"there is something to read ({len(data.get('records', []))} lines)")
+        first = data["records"][0]
+        check(all(key in first for key in ("ts", "level", "logger", "msg")),
+              f"a line has a time, a level, a source and a text ({sorted(first)})")
+        access = [x for x in data["records"] if x["logger"] == "web-player.access"]
+        check(bool(access), "every request is logged")
+        if access:
+            check("/api/player/playlist" in access[-1]["msg"],
+                  f"the request is named ({access[-1]['msg'][:70]})")
+        check("web-player.log" in json.dumps(data.get("file", {})),
+              "the log file is named")
+        check(bool(data.get("counts")), "the levels are counted")
+        r = client.get("/api/console/logs?level=ERROR")
+        check(r.status_code == 200, "the log can be filtered")
+        check(all(x["level"] == "ERROR" for x in r.json()["records"]),
+              "only the wanted level comes back")
+        r = client.get("/api/console/logs?search=playlist")
+        check(r.status_code == 200, "the log can be searched")
+        check(all("playlist" in x["msg"].lower() for x in r.json()["records"]),
+              "only the lines that match come back")
+
+        r = client.get("/api/console/logs/download")
+        check(r.status_code == 200, f"the log file can be downloaded ({r.status_code})")
+        check("attachment" in r.headers.get("content-disposition", ""),
+              "it is an attachment")
+        check(len(r.content) > 0, f"the file has content ({len(r.content)} bytes)")
+
+        r = client.delete("/api/console/logs")
+        check(r.status_code == 200, f"the log can be cleared ({r.status_code})")
+        check(r.json().get("removed", 0) > 0, "the lines are gone")
+        r = client.get("/api/console/logs")
+        check(len(r.json()["records"]) == 0, "the buffer is empty")
+
+        client.post("/console/logout")
+        r = client.get("/api/console/logs")
+        check(r.status_code == 401, f"the log is private ({r.status_code})")
+        client.post("/console/login", data={"username": "admin", "password": "admin-secret"})
 
     shutil.rmtree(TMP, ignore_errors=True)
     print("\n" + ("ALL TESTS PASSED" if failures == 0 else f"{failures} FAILURE(S)"))

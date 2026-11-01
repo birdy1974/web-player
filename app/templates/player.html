@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/static/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/vendor/video-js.min.css">
 <style>
@@ -43,7 +46,7 @@
 <div class="app">
   <header class="topbar">
     <div class="topbar-in">
-      <a class="brand" href="/player"><span class="logo">▶</span><span>web-player<small id="who">—</small></span></a>
+      <a class="brand" href="/player"><img class="logo" src="/static/brand/web-player.svg" alt="" width="30" height="30"><span>web-player<small id="who">—</small></span></a>
       <span class="spacer"></span>
       <form method="post" action="/player/logout" style="display:inline">
         <button class="btn sm ghost" type="submit">sign out</button>
