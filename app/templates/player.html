@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/vendor/video-js.min.css">
+<style>
+  .player-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  @media (max-width: 1020px) { .player-layout { grid-template-columns: 1fr; } }
+  .video-frame { background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .video-frame .video-js { width: 100%; aspect-ratio: 16/9; }
+  .now { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
+  .now img { width: 74px; height: 48px; object-fit: cover; border-radius: 7px; background: var(--panel); }
+  .now h2 { font-size: 17px; margin: 0 0 3px; }
+  .jump { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .jump input[type=text] { width: 118px; font-family: ui-monospace, monospace; }
+  .side-panel { position: sticky; top: 74px; }
+  .plist { max-height: calc(100vh - 260px); overflow: auto; margin: 0 -4px; }
+  .pitem { display: flex; gap: 9px; align-items: center; padding: 7px 8px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; }
+  .pitem:hover { background: #131d2e; }
+  .pitem.on { background: #0d2a3f; border-color: var(--acc); }
+  .pitem img { width: 74px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--panel); flex: none; }
+  .pitem .nm { font-size: 13px; font-weight: 600; line-height: 1.25; }
+  .pitem .mt { color: var(--mut); font-size: 11.5px; }
+  .pitem .prog { height: 3px; border-radius: 2px; background: #26344c; margin-top: 4px; overflow: hidden; }
+  .pitem .prog i { display: block; height: 100%; background: var(--acc); }
+  .pl-head { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); }
+  .pl-head input[type=search] { width: 100%; }
+  .filt { display: flex; gap: 6px; flex-wrap: wrap; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  .yt-frame { width: 100%; aspect-ratio: 16/9; border: 0; background: #000; }
+  .kbd { border: 1px solid var(--border2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; font-size: 11px; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-in">
+      <a class="brand" href="/player"><span class="logo">▶</span><span>web-player<small id="who">—</small></span></a>
+      <span class="spacer"></span>
+      <form method="post" action="/player/logout" style="display:inline">
+        <button class="btn sm ghost" type="submit">sign out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="player-layout">
+      <div>
+        <div class="video-frame">
+          <video id="v" class="video-js vjs-big-play-centered vjs-fluid" controls preload="metadata" playsinline></video>
+          <iframe id="yt" class="yt-frame hidden" allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+        </div>
+
+        <div class="now">
+          <img id="now-poster" alt="" hidden>
+          <div class="grow">
+            <h2 id="now-title">Nothing playing</h2>
+            <div class="mut small" id="now-meta">Pick a title from the playlist on the right.</div>
+          </div>
+          <div class="row">
+            <button class="btn sm" id="btn-prev" type="button">⏮ prev</button>
+            <button class="btn sm" id="btn-next" type="button">next ⏭</button>
+          </div>
+        </div>
+
+        <div class="jump">
+          <span class="mut small">Jump to</span>
+          <input type="text" id="jump-in" placeholder="01:23:45" aria-label="Jump to timestamp">
+          <button class="btn sm" id="btn-jump" type="button">Go</button>
+          <span class="sep"></span>
+          <button class="btn sm" id="btn-back" type="button">−10 s</button>
+          <button class="btn sm" id="btn-fwd" type="button">+10 s</button>
+          <span class="sep"></span>
+          <label class="row mut small" style="gap:6px"><input type="checkbox" id="opt-resume" checked> resume where I left off</label>
+          <label class="row mut small" style="gap:6px"><input type="checkbox" id="opt-next" checked> auto-play next</label>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Keyboard</h3></div>
+          <div class="mut small" style="line-height:2">
+            <span class="kbd">space</span> play/pause ·
+            <span class="kbd">←</span> <span class="kbd">→</span> 10 s ·
+            <span class="kbd">j</span> <span class="kbd">l</span> 30 s ·
+            <span class="kbd">↑</span> <span class="kbd">↓</span> volume ·
+            <span class="kbd">f</span> fullscreen ·
+            <span class="kbd">m</span> mute ·
+            <span class="kbd">/</span> focus the search box ·
+            <span class="kbd">n</span> <span class="kbd">p</span> next / previous title
+          </div>
+        </div>
+      </div>
+
+      <aside class="side-panel">
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="pl-head">
+            <input type="search" id="p-search" placeholder="Search the playlist…" aria-label="Search the playlist">
+          </div>
+          <div class="filt" id="p-filters"></div>
+          <div class="plist" id="p-list"></div>
+          <div class="pl-head" style="border-top:1px solid var(--border);border-bottom:0">
+            <span class="mut small" id="p-count"></span>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<div id="toasts"></div>
+<script src="/static/vendor/video.min.js"></script>
+<script src="/static/js/player.js"></script>
+</body>
+</html>

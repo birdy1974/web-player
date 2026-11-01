@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .login-wrap { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+  .login-card { width: min(380px, 100%); background: var(--card); border: 1px solid var(--border);
+                border-radius: 14px; padding: 22px; box-shadow: var(--shadow); }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login-card" method="post" action="{{ action }}">
+    <div class="row" style="margin-bottom:6px">
+      <span class="logo" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(140deg,#38bdf8,#6366f1);color:#06121f;font-weight:800">▶</span>
+      <div>
+        <div style="font-weight:700;font-size:16px">web-player</div>
+        <div class="mut small">{{ 'management console' if kind == 'admin' else 'sign in to watch' }}</div>
+      </div>
+    </div>
+    <div class="col" style="margin-top:16px;gap:12px">
+      <label class="field"><span>Username</span>
+        <input type="text" name="username" autocomplete="username" autofocus required></label>
+      <label class="field"><span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="btn pri" type="submit" style="justify-content:center;padding:9px">Sign in</button>
+      {% if error %}<div style="color:var(--err);font-size:12.5px">{{ error }}</div>{% endif %}
+    </div>
+    <p class="mut small" style="margin:16px 0 0;border-top:1px solid var(--border);padding-top:12px">{{ hint }}</p>
+  </form>
+</div>
+</body>
+</html>
