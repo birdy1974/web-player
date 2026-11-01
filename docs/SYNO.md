@@ -92,10 +92,11 @@ The image is built for `linux/amd64` — the DS918+ is x86-64, so no
 To go back to building on the NAS: empty `WEB_PLAYER_IMAGE` again and run
 `sudo docker compose up -d --build`.
 
-> The package is public: `ghcr.io/birdy1974/web-player`. If the pull answers
-> `denied` or `unauthorized`, the package is private — log in with
-> `sudo docker login ghcr.io` and a GitHub token that has the `read:packages`
-> scope.
+> The package is created by the first CI run and is **private by default**:
+> open the repository's **Packages** tab → *web-player* → *Package settings* →
+> *Change visibility* → **Public** if the NAS should pull it without a token.
+> Otherwise log in on the NAS with `sudo docker login ghcr.io` and a GitHub
+> token that has the `read:packages` scope.
 
 ---
 
