@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import (
@@ -155,6 +157,9 @@ async def playlist(request: Request, db: AsyncSession = Depends(get_db)):
             "height": probe.get("height"),
             "progress_s": progress.get(item.id, 0),
             "src": stream_url(request, item, delivery),
+            "downloadable": downloadable(item),
+            "download_url": f"/player/download/{item.id}" if downloadable(item) else None,
+            "download_name": download_filename(item),
         })
     return {"items": out, "user": {"id": user.id, "name": user.name},
             "max_streams": MAX_STREAMS}
@@ -248,6 +253,140 @@ async def stream_direct(media_id: int, request: Request,
         return RedirectResponse(source, status_code=302)
 
     return _ranged_file(Path(source), request, filename=filename)
+
+
+# --------------------------------------------------------------------------
+# download
+# --------------------------------------------------------------------------
+def download_filename(item: Media) -> str:
+    """The name the file gets on the user's disk."""
+    if item.source_type == "local" and item.path:
+        name = Path(item.path).name
+    elif item.source_type == "youtube":
+        name = f"{item.title or 'video'}.mp4"
+    elif item.url:
+        name = Path(item.url.split("?")[0]).name or (item.title or "video")
+    else:
+        name = item.title or "video"
+    # No path separators, no control characters: this ends up in a header.
+    name = re.sub(r'[\\/\x00-\x1f\x7f"]', "_", name).strip() or "video"
+    return name
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 6266: an ASCII fallback plus the real UTF-8 name.
+
+    A browser that only reads `filename` gets a mangled name; one that reads
+    `filename*` gets the exact one.
+    """
+    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "_")
+    quoted = quote(filename, safe="")
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted}'
+
+
+def downloadable(item: Media) -> bool:
+    """Can this item be handed to the user as a file?
+
+    * a local file — always;
+    * a YouTube link — once yt-dlp resolved it (it is resolved on demand);
+    * a URL — when it is a file and not an HLS playlist. An HLS stream has no
+      file behind it: it is an endless series of segments.
+    """
+    if item.source_type == "local":
+        return True
+    if item.source_type == "youtube":
+        return True
+    return bool(item.url) and not library.is_hls_url(item.url)
+
+
+@router.get("/player/download/{media_id}")
+async def download(media_id: int, request: Request,
+                   db: AsyncSession = Depends(get_db)):
+    """Hand the file to the browser as an attachment.
+
+    The user gets the **original** file — an MKV stays an MKV, it is not the
+    transcoded stream the browser was watching. Range requests are forwarded,
+    so a large file can be resumed after an interrupted download.
+    """
+    item = await playable_media(request, db, media_id)
+    filename = download_filename(item)
+
+    if item.source_type == "local":
+        path = library.absolute_path(item)
+        if path is None or not path.exists():
+            raise HTTPException(404, "the file is gone")
+        return FileResponse(
+            str(path),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": _content_disposition(filename),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    if item.source_type == "youtube":
+        if item.resolved_state != "resolved" or not item.resolved_url:
+            await resolver.resolve(db, item, force=True)
+        if item.resolved_state != "resolved" or not item.resolved_url:
+            raise HTTPException(
+                502, f"yt-dlp could not resolve this link: {item.resolved_error}")
+        source = item.resolved_url
+    else:
+        source = item.url
+        if not source:
+            raise HTTPException(404, "no source")
+        if library.is_hls_url(source):
+            raise HTTPException(
+                409, "an HLS stream has no file behind it — it cannot be downloaded")
+
+    return await _proxy_attachment(source, filename, request)
+
+
+async def _proxy_attachment(url: str, filename: str, request: Request) -> Response:
+    """Stream a remote file to the browser as an attachment.
+
+    The Range header is forwarded, so an interrupted download can be resumed.
+    The NAS stays in the path (it has to, to add the attachment header and
+    the file name), but it never buffers the file: it copies the bytes.
+    """
+    import httpx
+
+    headers = {}
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
+
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=30.0, read=600.0), follow_redirects=True)
+    try:
+        upstream = await client.send(
+            client.build_request("GET", url, headers=headers), stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(502, f"the source could not be reached: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(502, f"the source answered {upstream.status_code}")
+
+    async def body():
+        try:
+            async for chunk in upstream.aiter_bytes(64 * 1024):
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    out = {
+        "Content-Disposition": _content_disposition(filename),
+        "Cache-Control": "no-store",
+        "Accept-Ranges": "bytes",
+    }
+    for header in ("content-type", "content-length", "content-range"):
+        if upstream.headers.get(header):
+            out[header.title()] = upstream.headers[header]
+
+    return StreamingResponse(body(), status_code=upstream.status_code, headers=out)
 
 
 def _ranged_file(path: Path, request: Request, filename: str) -> Response:

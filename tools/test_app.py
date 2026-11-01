@@ -206,6 +206,33 @@ def main() -> int:
             check("#EXT-X-ENDLIST" in body, "it is a complete (VOD) playlist")
             check("/player/segment/" in body, "the segments point back at the application")
 
+        print("\n== downloading a file ==")
+        r = client.get(f"/player/download/{media_id}")
+        check(r.status_code == 200, f"the download answers ({r.status_code})")
+        disposition = r.headers.get("content-disposition", "")
+        check("attachment" in disposition, f"it is an attachment ({disposition})")
+        check("clip.mp4" in disposition, f"the file keeps its name ({disposition})")
+        check(r.headers.get("accept-ranges") == "bytes", "the download advertises Range support")
+        check(len(r.content) > 0, f"the bytes arrive ({len(r.content)})")
+        r = client.get(f"/player/download/{media_id}", headers={"Range": "bytes=0-99"})
+        check(r.status_code == 206, f"a resumed download answers 206 ({r.status_code})")
+        check(len(r.content) == 100, f"the resumed part has the right size ({len(r.content)})")
+        r = client.get("/api/player/playlist")
+        entry = r.json()["items"][0]
+        check(entry.get("downloadable") is True, "the playlist says the item is downloadable")
+        check(entry.get("download_url") == f"/player/download/{media_id}",
+              f"the playlist carries the download URL ({entry.get('download_url')})")
+        check(entry.get("download_name") == "clip.mp4",
+              f"the playlist carries the file name ({entry.get('download_name')})")
+
+        print("\n== an item that is not shared cannot be downloaded either ==")
+        client.post("/player/logout")
+        client.post("/player/login", data={"username": "stranger", "password": "s3cret"})
+        r = client.get(f"/player/download/{media_id}")
+        check(r.status_code == 404, f"the stranger gets nothing ({r.status_code})")
+        client.post("/player/logout")
+        client.post("/player/login", data={"username": "family", "password": "family-secret"})
+
         print("\n== the Enigma2 bouquet ==")
         r = client.get("/api/console/bouquet/preview")
         check(r.status_code == 200, f"the bouquet preview answers ({r.status_code})")

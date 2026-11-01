@@ -45,6 +45,8 @@ web-player/
 * Video.js: play/pause, ±10 s, speed, picture-in-picture, fullscreen, keyboard control.
 * **Jump to a timestamp** (`01:23:45`) — exact for a progressive file, accurate
   to one segment (4 s) for an on-demand HLS stream.
+* **Download the file** — the button next to the title hands over the *original*
+  file (an MKV stays an MKV), with a proper file name and a resumable transfer.
 * Search the playlist, resume where you left off, auto-play the next title.
 
 ---

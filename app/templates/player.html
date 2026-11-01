@@ -26,6 +26,12 @@
   .pitem .mt { color: var(--mut); font-size: 11.5px; }
   .pitem .prog { height: 3px; border-radius: 2px; background: #26344c; margin-top: 4px; overflow: hidden; }
   .pitem .prog i { display: block; height: 100%; background: var(--acc); }
+  .pitem .dl {
+    flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+    color: var(--mut2); text-decoration: none; border: 1px solid transparent; font-size: 14px;
+  }
+  .pitem .dl:hover { color: var(--acc); border-color: var(--border2); background: #131d2e; text-decoration: none; }
+  .pitem .dl[aria-disabled="true"] { opacity: .3; pointer-events: none; }
   .pl-head { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); }
   .pl-head input[type=search] { width: 100%; }
   .filt { display: flex; gap: 6px; flex-wrap: wrap; padding: 9px 10px; border-bottom: 1px solid var(--border); }
@@ -62,6 +68,7 @@
           <div class="row">
             <button class="btn sm" id="btn-prev" type="button">⏮ prev</button>
             <button class="btn sm" id="btn-next" type="button">next ⏭</button>
+            <a class="btn sm" id="btn-download" href="#" download title="Download the original file">⬇ download</a>
           </div>
         </div>
 

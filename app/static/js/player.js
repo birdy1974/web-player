@@ -98,6 +98,10 @@
       const pct = m.progress_s && m.duration_s ? Math.min(100, Math.round(m.progress_s / m.duration_s * 100)) : 0;
       const badge = m.delivery === 'hls' ? 'HLS' : (m.delivery === 'embed' ? 'embed' : 'direct');
       const cls = m.delivery === 'direct' ? 'ok' : (m.delivery === 'hls' ? 'warn' : 'purple');
+      const dl = m.downloadable
+        ? `<a class="dl" href="${esc(m.download_url)}" download="${esc(m.download_name || '')}"
+             title="Download the original file" aria-label="Download ${esc(m.title)}">⬇</a>`
+        : `<span class="dl" aria-disabled="true" title="This item cannot be downloaded">⬇</span>`;
       return `<div class="pitem ${current && current.id === m.id ? 'on' : ''}" data-id="${m.id}">
         ${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ''}
         <div class="grow">
@@ -107,10 +111,12 @@
           </div>
           ${pct ? `<div class="prog"><i style="width:${pct}%"></i></div>` : ''}
         </div>
+        ${dl}
       </div>`;
     }).join('') : '<div class="mut center" style="padding:26px 14px">Nothing matches.</div>';
 
-    $$('#p-list .pitem').forEach(el => el.addEventListener('click', () => {
+    $$('#p-list .pitem').forEach(el => el.addEventListener('click', (e) => {
+      if (e.target.closest('.dl')) return;      // the download button plays nothing
       play(items.find(m => m.id === Number(el.dataset.id)));
     }));
   }
@@ -159,6 +165,21 @@
     $('#now-meta').textContent = bits.join(' · ');
     if (item.poster) { const im = $('#now-poster'); im.src = item.poster; im.hidden = false; }
     else $('#now-poster').hidden = true;
+
+    /* the download button points at the original file of this item */
+    const dl = $('#btn-download');
+    if (item.downloadable) {
+      dl.href = item.download_url;
+      dl.setAttribute('download', item.download_name || '');
+      dl.removeAttribute('aria-disabled');
+      dl.title = 'Download the original file (' + (item.download_name || '') + ')';
+      dl.classList.remove('mut');
+    } else {
+      dl.removeAttribute('href');
+      dl.setAttribute('aria-disabled', 'true');
+      dl.title = 'This item cannot be downloaded (an HLS stream has no file behind it)';
+      dl.classList.add('mut');
+    }
 
     if (item.delivery === 'embed') {
       $('#v').classList.add('hidden');

@@ -53,7 +53,8 @@ a *one bouquet per user* layout) · Settings.
 
 *Player* — sign in with any password as `family`, `kids` or `guest` (each sees a different
 playlist) · search the playlist · play · jump to a timestamp (`01:23:45`) · ±10 s · keyboard
-shortcuts · resume.
+shortcuts · resume · **download the file** (the ⬇ button: the original file, not the
+transcoded stream).
 
 The demo clips are generated with ffmpeg (test patterns), so the seek really works: the dev
 server answers `Range:` requests, which is exactly what the real backend must do.

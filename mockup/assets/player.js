@@ -92,6 +92,12 @@
     $('#p-list').innerHTML = rows.length ? rows.map(m => {
       const p = prog[m.id];
       const pct = p && m.duration ? Math.min(100, Math.round(p / m.duration * 100)) : 0;
+      /* The real application hands the ORIGINAL file over (an MKV stays an
+       * MKV); an HLS stream has no file behind it and cannot be downloaded. */
+      const canDownload = m.probe.delivery !== 'embed' && !(m.source === 'url' && /\.m3u8?($|\?)/i.test(m.url || ''));
+      const dl = canDownload
+        ? `<span class="dl" data-dl="${m.id}" title="Download the original file">⬇</span>`
+        : `<span class="dl off" title="This item cannot be downloaded">⬇</span>`;
       return `<div class="pitem ${current && current.id === m.id ? 'on' : ''}" data-id="${m.id}">
         ${m.poster ? `<img src="${esc(m.poster)}" alt="">` : `<img src="assets/vendor/blank.png" alt="">`}
         <div class="grow">
@@ -102,11 +108,17 @@
           </div>
           ${pct ? `<div class="prog"><i style="width:${pct}%"></i></div>` : ''}
         </div>
+        ${dl}
       </div>`;
     }).join('') : '<div class="mut center" style="padding:26px 14px">Nothing matches.</div>';
 
-    $$('#p-list .pitem').forEach(el => el.addEventListener('click', () => {
+    $$('#p-list .pitem').forEach(el => el.addEventListener('click', (e) => {
+      if (e.target.closest('.dl')) return;      // the download button plays nothing
       play(WP.mediaById(el.dataset.id));
+    }));
+    $$('#p-list .dl[data-dl]').forEach(el => el.addEventListener('click', () => {
+      const m = WP.mediaById(el.dataset.dl);
+      toast('The real application serves the original file with a Content-Disposition: attachment header', 'ok');
     }));
   }
 
@@ -153,6 +165,13 @@
     $('#now-meta').textContent = bits.join(' · ');
     if (item.poster) { const im = $('#now-poster'); im.src = item.poster; im.hidden = false; }
     else $('#now-poster').hidden = true;
+
+    const canDownload = item.probe.delivery !== 'embed'
+      && !(item.source === 'url' && /\.m3u8?($|\?)/i.test(item.url || ''));
+    $('#btn-download').classList.toggle('mut', !canDownload);
+    $('#btn-download').title = canDownload
+      ? 'Download the original file'
+      : 'This item cannot be downloaded (an HLS stream has no file behind it)';
 
     if (item.probe.delivery === 'embed') {
       $('#v').classList.add('hidden');
@@ -227,6 +246,13 @@
 
   $('#btn-jump').addEventListener('click', () => jumpTo($('#jump-in').value));
   $('#jump-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); jumpTo($('#jump-in').value); } });
+  $('#btn-download').addEventListener('click', () => {
+    if (!current) return;
+    const canDownload = current.probe.delivery !== 'embed'
+      && !(current.source === 'url' && /\.m3u8?($|\?)/i.test(current.url || ''));
+    if (!canDownload) { toast('This item cannot be downloaded', 'warn'); return; }
+    toast('The real application serves the original file with a Content-Disposition: attachment header', 'ok');
+  });
   $('#btn-back').addEventListener('click', () => step(-10));
   $('#btn-fwd').addEventListener('click', () => step(10));
 

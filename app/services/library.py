@@ -46,6 +46,18 @@ MIME_BY_EXT = {
 }
 
 
+def is_hls_url(url: str) -> bool:
+    """Is this URL a playlist (an endless series of segments) rather than a file?
+
+    Such a URL has no file behind it, so it cannot be handed to the user as a
+    download.
+    """
+    if not url:
+        return False
+    path = url.split("?")[0].split("#")[0].lower()
+    return path.endswith(".m3u8") or path.endswith(".m3u")
+
+
 def media_mime(path: str) -> str:
     ext = Path(path).suffix.lower()
     return MIME_BY_EXT.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"
@@ -283,7 +295,9 @@ async def probe_one(db: AsyncSession, item: Media) -> dict | None:
         if info.get("duration_s"):
             item.duration_s = info["duration_s"]
         await db.commit()
-        if not item.poster:
+        # A file without a video track (an audio book, a radio recording) has
+        # no frame to grab — that is not an error, it simply has no poster.
+        if not item.poster and info.get("video"):
             poster = await generate_poster(path, item.title)
             if poster:
                 item.poster = poster
