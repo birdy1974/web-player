@@ -26,16 +26,27 @@ ENV PYTHONUNBUFFERED=1 \
     WEB_PLAYER_PORT=8088
 
 # ---------------------------------------------------------------- packages
+#
+# The Intel VAAPI drivers live in Debian's "non-free" component, so that
+# component has to be enabled. Depending on the base image the sources are
+# either the classic /etc/apt/sources.list or the newer deb822 file
+# (/etc/apt/sources.list.d/debian.sources) — both are patched here.
+#
+# The Intel drivers themselves are optional: without them the transcode falls
+# back to libx264 (slower, but it works). A package that this Debian release
+# does not know must not stop the image from being built.
 RUN set -eux; \
-    sed -i 's/^deb \(.*\)$/deb \1 contrib non-free/' /etc/apt/sources.list; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do \
+        [ -f "$f" ] || continue; \
+        sed -i -e 's/^deb \(.*\)$/deb \1 contrib non-free/' \
+               -e 's/^\(Components: *\)main[[:space:]]*$/\1main contrib non-free/' "$f"; \
+    done; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         vainfo \
         libva2 \
         libva-drm2 \
-        intel-media-va-driver \
-        i965-va-driver \
         mesa-va-drivers \
         libgbm1 \
         ca-certificates \
@@ -43,6 +54,10 @@ RUN set -eux; \
         gosu \
         tini \
         tzdata; \
+    for pkg in intel-media-va-driver i965-va-driver; do \
+        apt-get install -y --no-install-recommends "$pkg" \
+            || echo "WARNING: $pkg is not in this release — VAAPI may not work"; \
+    done; \
     rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------------------- app code
