@@ -18,7 +18,7 @@ import json
 import logging
 import mimetypes
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,12 +111,28 @@ def relative_to_root(path: Path) -> str | None:
         return None
 
 
+def safe_join(root: Path, sub: str | None) -> Path | None:
+    """Resolve a relative path inside the root — it can never leave it.
+
+    The path is resolved, so a symlink that points out of the media root is
+    refused as well.
+    """
+    root = root.resolve()
+    clean = (sub or "").strip().lstrip("/")
+    try:
+        candidate = (root / clean).resolve()
+    except OSError:
+        return None
+    if candidate == root or candidate.is_relative_to(root):
+        return candidate
+    return None
+
+
 def absolute_path(item: Media) -> Path | None:
     if item.source_type != "local" or not item.path:
         return None
-    candidate = (MEDIA_ROOT / item.path).resolve()
-    root = MEDIA_ROOT.resolve()
-    if not str(candidate).startswith(str(root)):
+    candidate = safe_join(MEDIA_ROOT, item.path)
+    if candidate is None:
         return None          # never escape the media root
     return candidate
 
@@ -205,16 +221,26 @@ def _browser_playable(container: str, video: str | None, audio: str | None) -> b
 # scanning
 # --------------------------------------------------------------------------
 async def scan_root(db: AsyncSession, *, group_id: int | None = None,
-                    limit: int = 5000) -> dict:
+                    limit: int = 5000, folder: str | None = None) -> dict:
     """Add every media file under the media root that is not in the library.
 
-    Returns a small report so the console can say what happened.
+    With `folder` only that subfolder is scanned — that is what the file
+    browser of the console uses. Returns a small report so the console can
+    say what happened.
     """
+    start = MEDIA_ROOT
+    if folder:
+        start = safe_join(MEDIA_ROOT, folder)
+        if start is None:
+            raise ValueError("that folder is outside the media root")
+        if not start.is_dir():
+            raise ValueError("no such folder in the media root")
+
     added, skipped, failed = 0, 0, 0
     known = {row for row in (await db.execute(
         select(Media.path).where(Media.source_type == "local"))).scalars().all()}
 
-    for path in _walk(MEDIA_ROOT):
+    for path in _walk(start):
         if added + skipped >= limit:
             break
         rel = relative_to_root(path)
@@ -246,6 +272,93 @@ async def scan_root(db: AsyncSession, *, group_id: int | None = None,
             failed += 1
             log.exception("could not add %s", path)
     return {"added": added, "skipped": skipped, "failed": failed}
+
+
+# --------------------------------------------------------------------------
+# the file browser
+# --------------------------------------------------------------------------
+def browse(sub_path: str = "", *, limit: int = 2000) -> dict:
+    """One folder of the media root, the way a file browser shows it.
+
+    The result is what the console needs to draw an explorer: the folders
+    and the files of one directory, the breadcrumbs and the parent to go up
+    to. The path is always relative to the media root and can never leave it.
+    """
+    target = safe_join(MEDIA_ROOT, sub_path)
+    if target is None:
+        raise ValueError("that path is outside the media root")
+    if not target.exists():
+        raise FileNotFoundError("no such folder in the media root")
+    if not target.is_dir():
+        raise NotADirectoryError("that is a file, not a folder")
+
+    try:
+        raw = list(os.scandir(target))
+    except OSError as exc:
+        raise PermissionError(f"the folder cannot be read: {exc}") from exc
+
+    entries: list[dict] = []
+    truncated = False
+    for entry in sorted(raw, key=lambda e: (not e.is_dir(), e.name.lower())):
+        if entry.name.startswith("."):
+            continue                    # hidden files are not media
+        if len(entries) >= limit:
+            truncated = True
+            break
+        path = Path(entry.path)
+        rel = relative_to_root(path)
+        if rel is None:
+            continue                    # a link out of the media root
+        try:
+            if entry.is_dir():
+                entries.append({
+                    "name": entry.name, "type": "dir", "path": rel,
+                    "size": None, "media": False, "kind": None,
+                })
+                continue
+            size = entry.stat().st_size
+        except OSError:
+            continue
+        suffix = path.suffix.lower()
+        if suffix in AUDIO_EXTENSIONS:
+            kind = "audio"
+        elif suffix in VIDEO_EXTENSIONS:
+            kind = "video"
+        else:
+            kind = None
+        entries.append({
+            "name": entry.name, "type": "file", "path": rel, "size": size,
+            "media": kind is not None, "kind": kind,
+        })
+
+    rel_dir = relative_to_root(target) or ""
+    if rel_dir == ".":
+        rel_dir = ""                      # the root itself
+    parent = None
+    if rel_dir:
+        parent_path = PurePosixPath(rel_dir).parent
+        parent = "" if str(parent_path) == "." else str(parent_path)
+
+    breadcrumbs = [{"name": "media root", "path": ""}]
+    if rel_dir:
+        acc = ""
+        for part in PurePosixPath(rel_dir).parts:
+            acc = f"{acc}/{part}" if acc else part
+            breadcrumbs.append({"name": part, "path": acc})
+
+    return {
+        "root": str(MEDIA_ROOT),
+        "path": rel_dir,
+        "parent": parent,
+        "breadcrumbs": breadcrumbs,
+        "entries": entries,
+        "counts": {
+            "dirs": sum(1 for e in entries if e["type"] == "dir"),
+            "files": sum(1 for e in entries if e["type"] == "file"),
+            "media": sum(1 for e in entries if e["media"]),
+        },
+        "truncated": truncated,
+    }
 
 
 def _walk(root: Path):

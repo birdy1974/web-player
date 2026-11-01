@@ -37,12 +37,15 @@ def make_sample(target: Path) -> None:
     if sample.exists():
         shutil.copy(sample, target)
         return
-    subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-         "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=8",
-         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-         "-movflags", "+faststart", str(target)],
-        check=False)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=8",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+             "-movflags", "+faststart", str(target)],
+            check=False)
+    except OSError:
+        pass          # no ffmpeg on this machine — the dummy file below is used
     if not target.exists() or target.stat().st_size == 0:
         target.write_bytes(b"not a real video - the probe will fail, that is fine")
 
@@ -359,6 +362,38 @@ def main() -> int:
             server.shutdown()
             server.server_close()
 
+        print("\n== the file browser ==")
+        r = client.get("/api/console/browse")
+        check(r.status_code == 200, f"the browser lists the media root ({r.status_code})")
+        listing = r.json()
+        check(listing["path"] == "", "the browser starts at the media root")
+        check(listing["parent"] is None, "there is nothing above the media root")
+        check(listing["breadcrumbs"][0]["name"] == "media root",
+              "the breadcrumbs start at the media root")
+        names = [e["name"] for e in listing["entries"]]
+        check("clip.mp4" in names, f"the clip is listed ({names})")
+        clip = next((e for e in listing["entries"] if e["name"] == "clip.mp4"), None)
+        check(clip is not None and clip["media"] is True, "the clip is marked as a media file")
+        check(clip is not None and clip["in_library"] is True,
+              "the clip is marked as being in the library")
+        r = client.get("/api/console/browse?path=..%2F..")
+        check(r.status_code == 400, f"the browser stays inside the media root ({r.status_code})")
+        r = client.get("/api/console/browse?path=nope")
+        check(r.status_code == 404, f"an unknown folder is refused ({r.status_code})")
+
+        print("\n== a folder can be added to the library ==")
+        (MEDIA / "folder").mkdir(exist_ok=True)
+        shutil.copy(MEDIA / "clip.mp4", MEDIA / "folder" / "nested.mp4")
+        r = client.post("/api/console/media/scan", json={"folder": "folder"})
+        check(r.status_code == 200, f"a folder can be scanned ({r.status_code})")
+        check(r.json()["added"] == 1, f"the file in the folder was added ({r.json()})")
+        r = client.get("/api/console/browse?path=folder")
+        nested = next((e for e in r.json()["entries"] if e["name"] == "nested.mp4"), None)
+        check(nested is not None and nested["in_library"] is True,
+              "the browser shows that the file is in the library now")
+        r = client.post("/api/console/media/scan", json={"folder": ".."})
+        check(r.status_code == 400, f"a scan stays inside the media root ({r.status_code})")
+
         print("\n== the Enigma2 bouquet ==")
         r = client.get("/api/console/bouquet/preview")
         check(r.status_code == 200, f"the bouquet preview answers ({r.status_code})")
@@ -386,7 +421,7 @@ def main() -> int:
         r = client.get("/api/console/overview")
         check(r.status_code == 200, "the dashboard answers")
         data = r.json()
-        check(data["media_count"] == 6, f"the dashboard counts the media ({data['media_count']})")
+        check(data["media_count"] == 7, f"the dashboard counts the media ({data['media_count']})")
         check(data["user_count"] == 3, f"the dashboard counts the users ({data['user_count']})")
 
         print("\n== a disabled user loses access at once ==")

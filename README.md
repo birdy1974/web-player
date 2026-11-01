@@ -34,6 +34,9 @@ web-player/
 * The media library: local files on the NAS, direct URLs and YouTube links.
   A background `ffprobe` classifies every item as **direct** (playable as it
   is, 0 % CPU) or **HLS** (needs a remux / VAAPI transcode).
+* **A file browser for the NAS**: *Browse files…* opens an explorer over the
+  media root — folders, breadcrumbs, a filter. Pick a file for an item, or
+  put a file or a whole folder into the library without typing a path.
 * **Per-user playlists**: groups plus per-item exceptions. The grid shows the
   *computed* result per user and one click writes an exception.
 * **Output selection per item**: the public web player and/or an Enigma2 bouquet.
@@ -111,7 +114,7 @@ python3 tools/devserver.py --root mockup --port 8088
 ## Tests
 
 ```bash
-npm install && npm test                    # the mock-up (jsdom): both pages, driven
+npm install && npm test                    # the mock-up + the console (jsdom), driven
 .venv/bin/python tools/test_app.py         # the application: the whole API, end to end
 ```
 

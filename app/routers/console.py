@@ -257,11 +257,42 @@ async def delete_media(media_id: int, request: Request, db: AsyncSession = Depen
     return {"ok": True}
 
 
+@router.get("/api/console/browse")
+async def browse_media(request: Request, path: str = "",
+                      db: AsyncSession = Depends(get_db)):
+    """The file browser of the console: one folder of the media root.
+
+    The path is relative to the media root and can never leave it. Every
+    entry says whether it is already in the library.
+    """
+    await admin_user(db, request)
+    try:
+        listing = library.browse(path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "no such folder in the media root") from exc
+    except NotADirectoryError as exc:
+        raise HTTPException(400, "that is a file, not a folder") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+    known = {row for row in (await db.execute(
+        select(Media.path).where(Media.source_type == "local"))).scalars().all() if row}
+    for entry in listing["entries"]:
+        entry["in_library"] = entry["path"] in known
+    return listing
+
+
 @router.post("/api/console/media/scan")
 async def scan_media(request: Request, db: AsyncSession = Depends(get_db)):
     await admin_user(db, request)
     payload = await request.json() if request.headers.get("content-type") else {}
-    report = await library.scan_root(db, group_id=payload.get("group_id"))
+    try:
+        report = await library.scan_root(db, group_id=payload.get("group_id"),
+                                         folder=(payload.get("folder") or None))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     probed = await library.probe_pending(db, limit=200)
     return {**report, "probed": probed}
 
