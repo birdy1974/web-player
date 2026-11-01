@@ -62,6 +62,14 @@ web-player/
   * `WEB_PLAYER_DOWNLOAD_MODE=proxy` switches remote downloads back to the
     NAS streaming them (our file name, but the traffic runs through the NAS).
 * Search the playlist, resume where you left off, auto-play the next title.
+* **The type of every source travels with it.** Video.js asks the browser
+  whether it *can* play a source before it requests it, and a URL without a
+  file extension (`/player/stream/7/direct`) cannot be judged — the browser
+  answered "no" and the player said *"No compatible source was found for this
+  media"*. The server knows the type (it sends it in the `Content-Type`
+  header) and now says so in the playlist too. Should the browser still
+  refuse a file (an exotic codec), the player switches by itself to the
+  on-demand HLS stream.
 
 ---
 
@@ -114,7 +122,7 @@ python3 tools/devserver.py --root mockup --port 8088
 ## Tests
 
 ```bash
-npm install && npm test                    # the mock-up + the console (jsdom), driven
+npm install && npm test                    # the mock-up + the console + the player (jsdom), driven
 .venv/bin/python tools/test_app.py         # the application: the whole API, end to end
 ```
 

@@ -260,6 +260,7 @@ The media itself is not touched by web-player.
 | a file plays black on the box | the service type does not match the container: `4097` cannot demux Matroska, use `5002` |
 | the box does not show the new bouquet | the service list was not reloaded — `curl "http://<box-ip>/web/servicelistreload?mode=2"` |
 | the player shows nothing | the user has no group and no per-item grant — check *Dashboard → what each user can watch* |
+| *No compatible source was found for this media* | the browser refused the file. The type now travels with the source and the player switches by itself to the on-demand HLS stream; if that fails too, the file's codec is not supported by ffmpeg either — check the *delivery* of the item in the console (set it to *HLS* by hand) |
 | `yt-dlp` fails | YouTube changed something; the console shows the exact error. Update the image (`docker compose build --pull`) |
 | the browser will not seek in an MKV | it is served as HLS, so the jump is accurate to one segment (4 s by default, `WEB_PLAYER_HLS_SEGMENT`) |
 

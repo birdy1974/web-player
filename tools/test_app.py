@@ -230,6 +230,8 @@ def main() -> int:
         playlist = r.json()["items"]
         check(len(playlist) == 1, f"the family sees the one shared item ({len(playlist)})")
         check(playlist[0]["src"].startswith("/player/stream/"), "the item carries a stream URL")
+        check(playlist[0].get("mime") == "video/mp4",
+              f"the item carries its mime type ({playlist[0].get('mime')})")
 
         print("\n== the playlist is per user ==")
         client.post("/player/logout")
@@ -244,6 +246,11 @@ def main() -> int:
         check(r.status_code == 200, f"the direct stream answers ({r.status_code})")
         check(r.headers.get("accept-ranges") == "bytes", "the stream advertises Range support")
         check(r.headers.get("content-type", "").startswith("video/"), "the content type is right")
+        # The type the player is told and the type the server sends must be
+        # the same one — a mismatch is what makes a browser refuse the file.
+        check(playlist[0].get("mime") == r.headers.get("content-type", "").split(";")[0],
+              f"the type the player is told is the type the server sends "
+              f"({playlist[0].get('mime')} / {r.headers.get('content-type')})")
         r = client.get(f"/player/stream/{media_id}/direct", headers={"Range": "bytes=0-1023"})
         check(r.status_code == 206, f"a Range request answers 206 ({r.status_code})")
         check(len(r.content) == 1024, f"the Range request returns the right number of bytes ({len(r.content)})")
@@ -259,6 +266,8 @@ def main() -> int:
         print("\n== the HLS playlist ==")
         r = client.get(f"/player/stream/{media_id}/stream.m3u8")
         check(r.status_code == 200, f"the HLS playlist answers ({r.status_code})")
+        check(r.headers.get("content-type", "").startswith("application/vnd.apple.mpegurl"),
+              f"the playlist is served as an HLS playlist ({r.headers.get('content-type')})")
         if r.status_code == 200:
             body = r.text
             check(body.startswith("#EXTM3U"), "it is an HLS playlist")

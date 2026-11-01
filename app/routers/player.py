@@ -159,6 +159,7 @@ async def playlist(request: Request, db: AsyncSession = Depends(get_db)):
             "height": probe.get("height"),
             "progress_s": progress.get(item.id, 0),
             "src": stream_url(request, item, delivery),
+            "mime": stream_mime(item, delivery),
             "downloadable": downloadable(item),
             "download_url": f"/player/download/{item.id}" if downloadable(item) else None,
             "download_name": download_filename(item),
@@ -181,6 +182,36 @@ def stream_url(request: Request, item: Media, delivery: str) -> str | None:
     if delivery == "direct":
         return f"/player/stream/{item.id}/direct"
     return None
+
+
+def stream_mime(item: Media, delivery: str) -> str | None:
+    """The mime type of the stream — the player must not have to guess.
+
+    Video.js asks the browser whether it *can* play a source before it
+    requests it, and it can only answer that when it knows the type: a URL
+    without a file extension (`/player/stream/7/direct`) is refused with
+    "No compatible source was found for this media". The server knows the
+    type — it sends it in the Content-Type header — so it says so here too.
+    """
+    if delivery == "embed":
+        return None                      # the YouTube frame, not a video file
+    if delivery == "hls":
+        return "application/vnd.apple.mpegurl"
+
+    if item.source_type == "local":
+        path = library.absolute_path(item)
+        mime = library.media_mime(str(path)) if path is not None else None
+    else:
+        # A remote file: the extension of the URL is all we know about it.
+        # The browser checks the real Content-Type of the answer anyway.
+        clean = (item.url or item.resolved_url or "").split("?")[0].split("#")[0]
+        mime = library.media_mime(clean) if clean else None
+
+    # "application/octet-stream" means "we do not know" — a browser refuses
+    # such a source, so we offer the most likely type and let it try.
+    if not mime or mime == "application/octet-stream":
+        mime = "video/mp4"
+    return mime
 
 
 @router.get("/api/player/progress")
