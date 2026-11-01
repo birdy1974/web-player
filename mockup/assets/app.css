@@ -101,6 +101,7 @@ label.field > span { font-weight: 600; }
   width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
   background: linear-gradient(140deg, #38bdf8, #6366f1); color: #06121f; font-weight: 800; font-size: 14px;
 }
+.brand img.logo, .login-card img.logo { background: none; display: block; flex: none; }
 .brand small { display: block; font-weight: 400; font-size: 11.5px; color: var(--mut); }
 .page { max-width: 1500px; margin: 0 auto; padding: 16px 18px 60px; width: 100%; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }

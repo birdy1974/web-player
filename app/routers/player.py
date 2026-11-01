@@ -95,6 +95,7 @@ async def player_login(request: Request, db: AsyncSession = Depends(get_db)):
         error = "This account has expired"
 
     if error:
+        log.warning("player sign-in refused — user=%r: %s", name, error)
         return templates.TemplateResponse(request, "login.html", {
             "kind": "player", "title": "web-player — sign in",
             "action": "/player/login", "error": error,
@@ -102,14 +103,20 @@ async def player_login(request: Request, db: AsyncSession = Depends(get_db)):
         }, status_code=401)
 
     request.session["player_user"] = user.id
+    request.session["player_name"] = user.name
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
+    log.info("player signed in — user=%s (id=%s), expires=%s",
+             user.name, user.id, user.expires_at or "never")
     return RedirectResponse("/player", status_code=302)
 
 
 @router.post("/player/logout")
 async def player_logout(request: Request):
+    name = request.session.get("player_name") or request.session.get("player_user")
     request.session.pop("player_user", None)
+    request.session.pop("player_name", None)
+    log.info("player signed out — user=%s", name)
     return RedirectResponse("/player/login", status_code=302)
 
 
@@ -165,6 +172,8 @@ async def playlist(request: Request, db: AsyncSession = Depends(get_db)):
             "download_name": download_filename(item),
             "download_remote": item.source_type != "local",
         })
+    log.info("playlist for %s (id=%s): %s item(s) — %s", user.name, user.id, len(out),
+             ", ".join(f"{i['id']}:{i['delivery']}" for i in out) or "none")
     return {"items": out, "user": {"id": user.id, "name": user.name},
             "max_streams": MAX_STREAMS}
 
@@ -265,6 +274,8 @@ async def stream_direct(media_id: int, request: Request,
     if item.source_type == "local":
         path = library.absolute_path(item)
         if path is None or not path.exists():
+            log.warning("direct stream refused — media=%s (%r): the file is gone (%s)",
+                        item.id, item.title, item.path)
             raise HTTPException(404, "the file is gone")
         source = str(path)
         filename = path.name
@@ -272,10 +283,13 @@ async def stream_direct(media_id: int, request: Request,
         # A signed URL that has expired is resolved again on the spot.
         source, error = await resolver.fresh_url(db, item)
         if not source:
+            log.warning("direct stream refused — media=%s (%r): yt-dlp failed: %s",
+                        item.id, item.title, error)
             raise HTTPException(502, f"yt-dlp could not resolve this link: {error}")
         filename = f"{item.title}.mp4".replace(" ", "_")
     else:
         if not item.url:
+            log.warning("direct stream refused — media=%s (%r): no source", item.id, item.title)
             raise HTTPException(404, "no source")
         source = item.url
         filename = Path(item.url.split("?")[0]).name or "video.mp4"
@@ -283,8 +297,12 @@ async def stream_direct(media_id: int, request: Request,
     if source.startswith("http"):
         # A remote file: let the client fetch it itself (a redirect keeps the
         # NAS out of the path and the browser can seek when the host allows it).
+        log.info("direct stream — media=%s (%r) → redirect to the source %s",
+                 item.id, item.title, source[:120])
         return RedirectResponse(source, status_code=302)
 
+    log.info("direct stream — media=%s (%r) from the NAS: %s",
+             item.id, item.title, filename)
     return _ranged_file(Path(source), request, filename=filename)
 
 
@@ -357,7 +375,10 @@ async def download(media_id: int, request: Request,
     if item.source_type == "local":
         path = library.absolute_path(item)
         if path is None or not path.exists():
+            log.warning("download refused — media=%s (%r): the file is gone (%s)",
+                        item.id, item.title, item.path)
             raise HTTPException(404, "the file is gone")
+        log.info("download — media=%s (%r) from the NAS: %s", item.id, item.title, filename)
         return FileResponse(
             str(path),
             media_type="application/octet-stream",
@@ -370,12 +391,16 @@ async def download(media_id: int, request: Request,
     if item.source_type == "youtube":
         source, error = await resolver.fresh_url(db, item)
         if not source:
+            log.warning("download refused — media=%s (%r): yt-dlp failed: %s",
+                        item.id, item.title, error)
             raise HTTPException(502, f"yt-dlp could not resolve this link: {error}")
     else:
         source = item.url
         if not source:
             raise HTTPException(404, "no source")
         if library.is_hls_url(source):
+            log.info("download refused — media=%s (%r): an HLS stream has no file",
+                     item.id, item.title)
             raise HTTPException(
                 409, "an HLS stream has no file behind it — it cannot be downloaded")
 
@@ -385,11 +410,15 @@ async def download(media_id: int, request: Request,
     if download_mode() == "proxy":
         # Some hosts refuse a direct browser request — then the NAS copies the
         # bytes instead and can also give the file our name.
+        log.info("download — media=%s (%r) through the NAS (proxy): %s",
+                 item.id, item.title, filename)
         return await _proxy_attachment(source, filename, request)
 
     # The browser pulls the file from the source itself: the NAS is out of the
     # data path, the source decides the file name and whether a download can
     # be resumed.
+    log.info("download — media=%s (%r) → redirect to the source %s",
+             item.id, item.title, source[:120])
     return RedirectResponse(source, status_code=302,
                             headers={"Cache-Control": "no-store"})
 
@@ -468,6 +497,7 @@ async def stream_playlist(media_id: int, request: Request,
 
     source = await _hls_source(db, item)
     if source is None:
+        log.warning("HLS refused — media=%s (%r): no source", item.id, item.title)
         raise HTTPException(404, "this item cannot be served as HLS")
 
     duration = item.duration_s or 0.0
@@ -478,6 +508,9 @@ async def stream_playlist(media_id: int, request: Request,
     session = await hls.get_session(media_id, user.id, source, duration,
                                     _codec_of(item))
     playlist = hls.build_playlist(session)
+    log.info("HLS playlist — media=%s (%r) for %s: %s segment(s) of %ss, source %s",
+             item.id, item.title, user.name, session.total_segments,
+             session.seg_seconds, source)
     return Response(playlist, media_type="application/vnd.apple.mpegurl",
                     headers={"Cache-Control": "no-store"})
 

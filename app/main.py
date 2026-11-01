@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,12 +32,9 @@ from .config import (
 from .database import SessionLocal, init_db
 from .routers import console as console_router
 from .routers import player as player_router
-from .services import hls
+from .services import hls, logs
 
-logging.basicConfig(
-    level=os.environ.get("WEB_PLAYER_LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
-)
+logs.setup()
 log = logging.getLogger("web-player")
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -46,14 +44,18 @@ static_dir = BASE_DIR / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logs.take_over_uvicorn()
     await init_db()
-    log.info("web-player %s — media root %s, data %s", "starting", MEDIA_ROOT, DATA_DIR)
+    log.info("web-player starting — media root %s, data %s", MEDIA_ROOT, DATA_DIR)
+    log.info("log level %s, log file %s", os.environ.get("WEB_PLAYER_LOG_LEVEL", "INFO"),
+             logs.file_info().get("path"))
     log.info("transcode: %s", hls.transcode_mode())
     log.info("remote downloads: %s", download_mode())
     task = asyncio.create_task(_reaper())
     try:
         yield
     finally:
+        log.info("web-player stopping")
         task.cancel()
 
 
@@ -73,6 +75,68 @@ async def _reaper():
 
 app = FastAPI(title="web-player", version="1.0.0", lifespan=lifespan,
               docs_url=None, redoc_url=None)
+
+
+class AccessLog:
+    """Log every request: the method, the path, the status, the duration.
+
+    A plain ASGI middleware (not the BaseHTTP one) so that the streaming
+    endpoints — the files and the HLS segments — are not touched.
+
+    It sits **inside** the session middleware, so the signed-in user is
+    known: a line says who did what.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = time.perf_counter()
+        status = 500
+
+        async def send_wrapper(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            self._log(scope, status, started, failed=True)
+            raise
+        self._log(scope, status, started)
+
+    def _log(self, scope, status, started, failed=False):
+        path = scope.get("path", "")
+        if path.startswith("/static/"):
+            return                       # the icons and the css are noise
+        duration = (time.perf_counter() - started) * 1000
+        session = scope.get("session") or {}
+        who = session.get("admin") or session.get("player_name")
+        if not who and session.get("player_user"):
+            who = f"user#{session['player_user']}"
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
+        ip = headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if not ip:
+            client = scope.get("client")
+            ip = client[0] if client else "-"
+        level = logging.INFO
+        if status >= 500 or failed:
+            level = logging.ERROR
+        elif status >= 400:
+            level = logging.WARNING
+        elif path.startswith("/poster/"):
+            level = logging.DEBUG        # one per item — noise at INFO
+        logging.getLogger("web-player.access").log(
+            level, "%s %s → %s in %.0f ms (user=%s, ip=%s)",
+            scope.get("method", "?"), path, status, duration, who or "-", ip)
+
+
+app.add_middleware(AccessLog)
 
 app.add_middleware(
     SessionMiddleware,

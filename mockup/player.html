@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>web-player — public player (mock-up)</title>
+<link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="assets/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="assets/app.css">
 <link rel="stylesheet" href="assets/vendor/video-js.min.css">
 <style>
@@ -50,7 +53,8 @@
 <div id="login" class="login-wrap">
   <form class="login-card" id="login-form">
     <div class="row" style="margin-bottom:6px">
-      <span class="logo" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(140deg,#38bdf8,#6366f1);color:#06121f;font-weight:800">▶</span>
+      <img class="logo" src="assets/brand/web-player.svg" alt="" width="34" height="34"
+           style="width:34px;height:34px;border-radius:9px">
       <div><div style="font-weight:700;font-size:16px">web-player</div><div class="mut small">sign in to watch</div></div>
     </div>
     <div class="col" style="margin-top:16px;gap:12px">
@@ -70,7 +74,7 @@
 <div id="app" class="app hidden">
   <header class="topbar">
     <div class="topbar-in">
-      <a class="brand" href="index.html"><span class="logo">▶</span><span>web-player<small id="who">—</small></span></a>
+      <a class="brand" href="index.html"><img class="logo" src="assets/brand/web-player.svg" alt="" width="30" height="30"><span>web-player<small id="who">—</small></span></a>
       <span class="spacer"></span>
       <span class="badge warn">MOCK-UP</span>
       <a class="btn sm ghost" href="console.html" target="_blank">console ↗</a>

@@ -33,7 +33,10 @@ const LISTING = {
 };
 
 const RESPONSES = {
-  '/api/console/overview': { media_count: 1, user_count: 1, enabled_count: 1 },
+  '/api/console/overview': {
+    media_count: 1, user_count: 1, enabled_count: 1,
+    log_counts: { DEBUG: 0, INFO: 12, WARNING: 1, ERROR: 0, CRITICAL: 0 },
+  },
   '/api/console/media': {
     items: [{
       id: 1, title: 'Aurora drift', kind: 'movie', source_type: 'local',
@@ -49,6 +52,22 @@ const RESPONSES = {
   '/api/console/groups': { items: [{ id: 1, name: 'Movies' }] },
   '/api/console/receivers': { items: [], players: {} },
   '/api/console/browse': LISTING,
+  '/api/console/logs': {
+    records: [
+      { ts: '2026-11-01 15:10:43.120', level: 'INFO', logger: 'web-player.access',
+        msg: 'GET /player/stream/1/direct → 200 in 12 ms (user=family, ip=192.168.1.20)',
+        where: 'player.py:250' },
+      { ts: '2026-11-01 15:10:44.001', level: 'WARNING', logger: 'web-player.hls',
+        msg: 'hls ffmpeg for media=3 stopped (code 1): Invalid data found',
+        where: 'hls.py:210' },
+    ],
+    counts: { DEBUG: 0, INFO: 1, WARNING: 1, ERROR: 0, CRITICAL: 0 },
+    file: { path: '/config/web-player.log', exists: true, size: 2048,
+            modified: '2026-11-01T15:10:45' },
+    levels: ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+    config: { level: 'INFO', lines: 2000, max_bytes: 5242880,
+              path: '/config/web-player.log' },
+  },
 };
 
 const vc = new VirtualConsole();
@@ -132,6 +151,31 @@ const click = (el) => el.dispatchEvent(new win.MouseEvent('click', { bubbles: tr
   await wait(200);
   check($('#f-path').value === 'aurora-drift.mp4', `the path is filled in (${$('#f-path').value})`);
   check(!$('#f-form').classList.contains('hidden'), 'the form comes back');
+
+  console.log('\n== the dashboard shows the trouble ==');
+  const dashLog = $('#dash-log');
+  check(!!dashLog, 'the dashboard has a line for the log');
+  check(dashLog.textContent.includes('error(s)'), `the errors are counted (${dashLog.textContent.trim()})`);
+
+  console.log('\n== the log tab ==');
+  const logTab = $$('#tabs .tab').find(t => t.dataset.tab === 'logs');
+  check(!!logTab, 'the console has a "Logs" tab');
+  click(logTab);
+  await wait(400);
+  check(!$('#tab-logs').classList.contains('hidden'), 'the log tab opens');
+  const lines = $$('#log-box .logline');
+  check(lines.length === 2, `the log lines are shown (${lines.length})`);
+  check(lines[0].textContent.includes('web-player.access'), 'the line says where it came from');
+  check(lines[1].classList.contains('WARNING'), 'the level is shown');
+  check($('#log-info').textContent.includes('/config/web-player.log'),
+    'the log file is named');
+
+  console.log('\n== the symbol ==');
+  const logo = $('.brand img.logo');
+  check(!!logo, 'the header shows the symbol');
+  check(logo.getAttribute('src').includes('brand/web-player.svg'), 'it is the symbol of the player');
+  check(!!$('link[rel="icon"]'), 'the page has a favicon');
+  check($('link[rel="icon"]').getAttribute('href').includes('favicon.svg'), 'it is the symbol as an icon');
 
   console.log('\n== no errors ==');
   check(errors.length === 0, `no console errors (${errors.join(' | ')})`);

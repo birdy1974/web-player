@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- web-player — the symbol of the player: a screen with a play triangle
+     and a progress bar. It is the logo in the header and the icon in the
+     tab of the browser. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="web-player">
+  <title>web-player</title>
+  <defs>
+    <linearGradient id="wp-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.55" stop-color="#4f7ef7"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="wp-shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- the screen -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#wp-bg)"/>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#wp-shine)"/>
+
+  <!-- the play triangle -->
+  <path d="M25 19 L41.5 29 L25 39 Z" fill="#06121f" stroke="#06121f"
+        stroke-width="4.5" stroke-linejoin="round"/>
+
+  <!-- the progress bar: the line under the picture -->
+  <rect x="17" y="45.5" width="30" height="3.4" rx="1.7" fill="#06121f" opacity="0.28"/>
+  <rect x="17" y="45.5" width="16" height="3.4" rx="1.7" fill="#06121f" opacity="0.75"/>
+</svg>

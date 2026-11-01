@@ -56,11 +56,14 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
         item.resolved_state = "failed"
         item.resolved_error = f"yt-dlp timed out after {RESOLVE_TIMEOUT}s"
         await db.commit()
+        log.warning("yt-dlp timed out for %s (after %ss, yt-dlp=%s)",
+                    item.url, RESOLVE_TIMEOUT, YTDLP)
         return {"state": "failed", "error": item.resolved_error}
     except OSError as exc:
         item.resolved_state = "failed"
         item.resolved_error = f"yt-dlp could not be started: {exc}"
         await db.commit()
+        log.error("yt-dlp could not be started (%s): %s", YTDLP, exc)
         return {"state": "failed", "error": item.resolved_error}
 
     if proc.returncode != 0 or not out:
@@ -84,6 +87,7 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
         item.resolved_state = "failed"
         item.resolved_error = "yt-dlp found no playable stream"
         await db.commit()
+        log.warning("yt-dlp found no playable stream for %s", item.url)
         return {"state": "failed", "error": item.resolved_error}
 
     item.resolved_url = url
@@ -108,6 +112,8 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
         item.duration_s = float(info["duration"])
     item.delivery = "direct"
     await db.commit()
+    log.info("yt-dlp resolved %s → %s (%s, %s)", item.url,
+             (info.get("title") or "")[:60], fmt.get("format_id"), fmt.get("ext"))
     return {"state": "resolved", "url": url, "at": item.resolved_at.isoformat()}
 
 

@@ -101,6 +101,10 @@ label.field > span { font-weight: 600; }
   width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
   background: linear-gradient(140deg, #38bdf8, #6366f1); color: #06121f; font-weight: 800; font-size: 14px;
 }
+/* the symbol itself carries the gradient — nothing behind it */
+.brand img.logo, .login-card img.logo {
+  background: none; display: block; flex: none;
+}
 .brand small { display: block; font-weight: 400; font-size: 11.5px; color: var(--mut); }
 .page { max-width: 1500px; margin: 0 auto; padding: 16px 18px 60px; width: 100%; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
@@ -202,3 +206,20 @@ pre.code {
   font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1;
   overflow: auto; max-height: 420px; margin: 0; white-space: pre;
 }
+
+/* ---------- the log ---------- */
+.logbox {
+  background: #070c15; border: 1px solid var(--border); border-radius: 10px;
+  font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: auto; max-height: 58vh; padding: 8px 10px;
+}
+.logline { display: flex; gap: 9px; padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+.logline .lt { color: #64748b; flex: none; }
+.logline .ll { flex: none; width: 62px; font-weight: 700; }
+.logline .lg { flex: none; color: #7dd3fc; }
+.logline .lm { color: #cbd5e1; }
+.logline.DEBUG .ll { color: #64748b; }
+.logline.INFO .ll { color: #38bdf8; }
+.logline.WARNING .ll { color: #fbbf24; }
+.logline.ERROR .ll, .logline.CRITICAL .ll { color: #f87171; }
+.logline .lx { color: #fca5a5; display: block; margin: 2px 0 4px 71px; white-space: pre-wrap; }

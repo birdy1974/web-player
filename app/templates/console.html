@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/static/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/css/app.css">
 <style>
   .side { display: grid; grid-template-columns: 210px 1fr; gap: 16px; align-items: start; }
@@ -48,7 +51,7 @@
   <header class="topbar">
     <div class="topbar-in">
       <a class="brand" href="/console">
-        <span class="logo">▶</span>
+        <img class="logo" src="/static/brand/web-player.svg" alt="" width="30" height="30">
         <span>web-player<small>management console</small></span>
       </a>
       <span class="spacer"></span>
@@ -66,6 +69,7 @@
       <button class="tab" data-tab="users">Users <span class="count" id="c-users"></span></button>
       <button class="tab" data-tab="groups">Groups</button>
       <button class="tab" data-tab="e2">Enigma2 &amp; bouquets</button>
+      <button class="tab" data-tab="logs">Logs</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
 
@@ -76,6 +80,7 @@
       <div class="card" style="margin-top:14px">
         <div class="card-head"><h3>Needs attention</h3></div>
         <div id="dash-attention"></div>
+        <div id="dash-log" class="mut small" style="margin-top:10px"></div>
       </div>
 
       <div class="card">
@@ -207,6 +212,50 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================== LOGS =============================== -->
+    <section id="tab-logs" class="hidden">
+      <div class="card">
+        <div class="card-head">
+          <h3>Application log</h3>
+          <span class="spacer"></span>
+          <select id="log-level" title="only this level">
+            <option value="">all levels</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <input type="search" id="log-search" placeholder="search the log…" style="width:200px">
+          <label class="small mut" style="display:flex;align-items:center;gap:5px">
+            <input type="checkbox" id="log-auto" checked> auto
+          </label>
+          <button class="btn sm" id="log-refresh" type="button">refresh</button>
+          <button class="btn sm ghost" id="log-clear" type="button">clear</button>
+          <a class="btn sm ghost" id="log-download" href="/api/console/logs/download">⬇ file</a>
+        </div>
+        <div class="mut small" id="log-info" style="margin-bottom:8px">—</div>
+        <div class="logbox" id="log-box"><div class="mut small">No log lines yet.</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>How to read the log</h3></div>
+        <p class="mut small" style="margin:0 0 8px">The same lines are written to
+          <span class="mono">stdout</span> — that is what Portainer shows — and to the log
+          file in the data directory. The file survives a restart of the container and can
+          be downloaded here.</p>
+        <ul class="mut small" style="margin:0;padding-left:18px">
+          <li><b>web-player.access</b> — every request: the path, the status, the
+            duration, the user and the address it came from.</li>
+          <li><b>web-player.player</b> — the sign-ins, the playlist, the streams and the
+            downloads of the public player.</li>
+          <li><b>web-player.console</b> — what the administrator changed.</li>
+          <li><b>web-player.hls</b> — the on-demand HLS sessions: ffmpeg starts, seeks,
+            segments and errors.</li>
+          <li><b>web-player.library</b> — the scans, the probes (ffprobe) and the posters.</li>
+          <li><b>web-player.resolver</b> — yt-dlp and its failures.</li>
+        </ul>
       </div>
     </section>
 

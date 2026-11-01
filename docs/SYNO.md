@@ -240,6 +240,7 @@ Everything that matters is in the `/config` volume:
 | `session.key` | the cookie signing key (deleting it signs everybody out) |
 | `posters/` | the generated poster frames (they can be regenerated) |
 | `hls/` | the HLS work directories (temporary) |
+| `web-player.log` | the log of the application (three files, 5 MB each — see §7) |
 
 ```bash
 sudo docker run --rm -v web-player_web-player-config:/data -v /volume1/docker:/out \
@@ -250,7 +251,56 @@ The media itself is not touched by web-player.
 
 ---
 
-## 7. Troubleshooting
+## 7. The log
+
+Everything web-player does is written down — the same lines in three places:
+
+| Where | What it is |
+|---|---|
+| **stdout** | what **Portainer** shows under the container: *Logs*. It is the place to look when the container does not come up at all. |
+| **`/config/web-player.log`** | the same lines in a file that survives a restart of the container. It is rotated: three files of 5 MB. |
+| **Console → *Logs*** | the last lines in the browser: filter by level, search in them, download the file, empty it. |
+
+One line per event, with the place it came from:
+
+```
+2026-11-01 15:30:05 INFO    web-player             web-player starting — media root /media, data /config
+2026-11-01 15:30:33 INFO    web-player.console     console signed in — admin=admin
+2026-11-01 15:30:33 INFO    web-player.access      GET /api/player/playlist → 200 in 4 ms (user=family, ip=192.168.1.20)
+2026-11-01 15:31:16 ERROR   web-player.hls         hls ffmpeg for media=3 stopped (code 1): Invalid data found
+```
+
+| The source of the line | What it tells |
+|---|---|
+| `web-player.access` | every request: the path, the status, the duration, the user and the address it came from |
+| `web-player.player` | the sign-ins, the playlist, the streams, the HLS playlists and the downloads of the public player |
+| `web-player.console` | what the administrator changed (media, users, groups, receivers, the visibility) |
+| `web-player.hls` | the on-demand HLS sessions: ffmpeg starts, seeks, segments and failures |
+| `web-player.library` | the scans, the probes (ffprobe) and the posters |
+| `web-player.resolver` | yt-dlp and its failures |
+| `uvicorn.error` | the web server itself |
+
+**How much it tells** — in `.env`:
+
+```bash
+WEB_PLAYER_LOG_LEVEL=INFO     # DEBUG | INFO | WARNING | ERROR
+WEB_PLAYER_LOG_FILE=/config/web-player.log   # empty = only stdout
+WEB_PLAYER_LOG_LINES=2000      # how many lines the console keeps in memory
+```
+
+`DEBUG` adds every step of the ffprobe, the scan and the HLS pipeline — useful
+when a file is not classified the way you expect it.
+
+**The log of the last minutes** (without the console):
+
+```bash
+sudo docker logs --tail 200 web-player
+sudo docker exec web-player tail -n 200 /config/web-player.log
+```
+
+---
+
+## 8. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -263,10 +313,11 @@ The media itself is not touched by web-player.
 | *No compatible source was found for this media* | the browser refused the file. The type now travels with the source and the player switches by itself to the on-demand HLS stream; if that fails too, the file's codec is not supported by ffmpeg either — check the *delivery* of the item in the console (set it to *HLS* by hand) |
 | `yt-dlp` fails | YouTube changed something; the console shows the exact error. Update the image (`docker compose build --pull`) |
 | the browser will not seek in an MKV | it is served as HLS, so the jump is accurate to one segment (4 s by default, `WEB_PLAYER_HLS_SEGMENT`) |
+| something does not work and I do not know why | open **Console → *Logs*** (or `docker logs web-player`) — every request, every change and every failure is written down; see §7 |
 
 ---
 
-## 8. Updating
+## 9. Updating
 
 ```bash
 cd /volume1/docker/web-player

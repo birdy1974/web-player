@@ -15,9 +15,9 @@ web-player/
 │  ├─ main.py            the ASGI app, the session middleware, the health check
 │  ├─ models.py          the schema
 │  ├─ routers/           console.py (admin) · player.py (public + streaming)
-│  ├─ services/          visibility · library · hls · resolver · enigma2
+│  ├─ services/          visibility · library · hls · resolver · enigma2 · logs
 │  ├─ templates/         console.html · player.html · login.html
-│  └─ static/            css · js · the vendored Video.js
+│  └─ static/            css · js · brand (the symbol) · the vendored Video.js
 ├─ mockup/               the interactive prototype (fake data, no backend)
 ├─ docs/                 MOCKUP.md · SYNO.md
 ├─ tools/                devserver.py · make-demo-media.sh · the two test suites
@@ -43,6 +43,11 @@ web-player/
 * **Users**: username, hashed password, groups, max simultaneous streams, expiry.
 * **Enigma2**: receivers, service type, a live preview of the generated
   `userbouquet.*.tv` and a push to the box.
+* **A *Logs* tab for fault finding**: every request (the path, the status, the
+  duration, the user, the address), every sign-in, every change, every HLS
+  session and every failure — filterable by level, searchable, with the log
+  file to download. The very same lines go to **stdout** (what Portainer
+  shows) and to a rotating file in the data volume.
 
 **② Public web player — password protected** (`/player`)
 

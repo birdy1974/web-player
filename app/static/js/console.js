@@ -82,7 +82,7 @@
   /* ------------------------------------------------------------------ */
   function showTab(name) {
     $$('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name));
-    ['dash', 'media', 'users', 'groups', 'e2', 'settings'].forEach(k => {
+    ['dash', 'media', 'users', 'groups', 'e2', 'logs', 'settings'].forEach(k => {
       $('#tab-' + k).classList.toggle('hidden', k !== name);
     });
     if (name === 'dash') renderDash();
@@ -90,6 +90,7 @@
     if (name === 'users') renderUsers();
     if (name === 'groups') renderGroups();
     if (name === 'e2') renderE2();
+    if (name === 'logs') { renderLogs(); startLogTimer(); } else stopLogTimer();
     if (name === 'settings') renderSettings();
   }
   $$('#tabs .tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
@@ -108,6 +109,24 @@
       stat('Transcoding', (vaapi.mode || '?').toUpperCase(),
         vaapi.available ? 'Intel VAAPI is available' : 'no VAAPI — software fallback'),
     ].join('');
+
+    // the trouble in the log, at a glance
+    const counts = (o.log_counts || {});
+    const bad = (counts.ERROR || 0) + (counts.CRITICAL || 0);
+    const warn = counts.WARNING || 0;
+    const logStat = document.getElementById('dash-log');
+    if (logStat) {
+      logStat.innerHTML = `<b>${bad}</b> error(s), <b>${warn}</b> warning(s) in the log`
+        + (bad || warn
+          ? ' — open the <a href="#" id="dash-log-open">Logs</a> tab to see them.'
+          : ' — nothing to report.');
+      const link = document.getElementById('dash-log-open');
+      if (link) link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tab = $$('#tabs .tab').find(t => t.dataset.tab === 'logs');
+        if (tab) tab.click();
+      });
+    }
 
     const attention = [];
     (state.media || []).forEach(m => {
@@ -909,6 +928,93 @@
       } catch (e) { toast(e.message, 'err'); }
     });
   }
+
+  /* ------------------------------------------------------------------ */
+  /* LOGS                                                               */
+  /* ------------------------------------------------------------------ */
+  let logTimer = null;
+
+  function logLine(entry) {
+    const row = document.createElement('div');
+    row.className = 'logline ' + entry.level;
+    const time = document.createElement('span');
+    time.className = 'lt';
+    time.textContent = entry.ts;
+    const level = document.createElement('span');
+    level.className = 'll';
+    level.textContent = entry.level;
+    const logger = document.createElement('span');
+    logger.className = 'lg';
+    logger.textContent = entry.logger;
+    const msg = document.createElement('span');
+    msg.className = 'lm';
+    msg.textContent = entry.msg;
+    row.append(time, level, logger, msg);
+    if (entry.exc) {
+      const exc = document.createElement('span');
+      exc.className = 'lx';
+      exc.textContent = entry.exc;
+      row.appendChild(exc);
+    }
+    return row;
+  }
+
+  async function renderLogs() {
+    const level = $('#log-level').value;
+    const search = $('#log-search').value.trim();
+    const box = $('#log-box');
+    let data;
+    try {
+      data = await api(`/api/console/logs?level=${encodeURIComponent(level)}`
+        + `&search=${encodeURIComponent(search)}&limit=1000`);
+    } catch (e) {
+      box.innerHTML = `<div class="mut small">The log could not be read: ${esc(e.message)}</div>`;
+      return;
+    }
+    const records = data.records || [];
+    const file = data.file || {};
+    const counts = data.counts || {};
+    const countText = Object.keys(counts)
+      .filter(k => counts[k]).map(k => `${k.toLowerCase()} ${counts[k]}`).join(' · ');
+    const size = file.size ? (file.size > 1048576
+      ? (file.size / 1048576).toFixed(1) + ' MB' : Math.round(file.size / 1024) + ' kB') : '—';
+    $('#log-info').textContent =
+      `${records.length} line(s) shown · buffer: ${countText || 'empty'}`
+      + ` · file: ${file.path || 'none'} (${size})`
+      + ` · level ${(data.config || {}).level || 'INFO'}`;
+
+    box.innerHTML = '';
+    if (!records.length) {
+      box.innerHTML = '<div class="mut small">Nothing matches.</div>';
+      return;
+    }
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+    records.forEach(r => box.appendChild(logLine(r)));
+    if (atBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  function startLogTimer() {
+    stopLogTimer();
+    if ($('#log-auto').checked) logTimer = setInterval(renderLogs, 4000);
+  }
+  function stopLogTimer() {
+    if (logTimer) { clearInterval(logTimer); logTimer = null; }
+  }
+
+  $('#log-refresh').addEventListener('click', renderLogs);
+  $('#log-level').addEventListener('change', renderLogs);
+  $('#log-search').addEventListener('input', () => {
+    clearTimeout(window.__logSearch);
+    window.__logSearch = setTimeout(renderLogs, 250);
+  });
+  $('#log-auto').addEventListener('change', startLogTimer);
+  $('#log-clear').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/console/logs?file=1', { method: 'DELETE' });
+      toast(`The log was cleared (${r.removed} line(s) in the buffer)`, 'ok');
+      renderLogs();
+    } catch (e) { toast(e.message, 'err'); }
+  });
 
   /* ------------------------------------------------------------------ */
   /* SETTINGS                                                           */
