@@ -22,7 +22,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import BASE_URL, MAX_STREAMS, MEDIA_ROOT, PUBLIC_URL, SESSION_SECRET
+from ..config import (
+    BASE_URL, MAX_STREAMS, MEDIA_ROOT, PUBLIC_URL, SESSION_SECRET, download_mode,
+)
 from ..database import get_db
 from ..models import Media, PlaybackProgress, User
 from ..security import verify_password
@@ -160,6 +162,7 @@ async def playlist(request: Request, db: AsyncSession = Depends(get_db)):
             "downloadable": downloadable(item),
             "download_url": f"/player/download/{item.id}" if downloadable(item) else None,
             "download_name": download_filename(item),
+            "download_remote": item.source_type != "local",
         })
     return {"items": out, "user": {"id": user.id, "name": user.name},
             "max_streams": MAX_STREAMS}
@@ -235,11 +238,10 @@ async def stream_direct(media_id: int, request: Request,
         source = str(path)
         filename = path.name
     elif item.source_type == "youtube":
-        if item.resolved_state != "resolved" or not item.resolved_url:
-            await resolver.resolve(db, item, force=True)
-        if item.resolved_state != "resolved" or not item.resolved_url:
-            raise HTTPException(502, f"yt-dlp could not resolve this link: {item.resolved_error}")
-        source = item.resolved_url
+        # A signed URL that has expired is resolved again on the spot.
+        source, error = await resolver.fresh_url(db, item)
+        if not source:
+            raise HTTPException(502, f"yt-dlp could not resolve this link: {error}")
         filename = f"{item.title}.mp4".replace(" ", "_")
     else:
         if not item.url:
@@ -302,11 +304,21 @@ def downloadable(item: Media) -> bool:
 @router.get("/player/download/{media_id}")
 async def download(media_id: int, request: Request,
                    db: AsyncSession = Depends(get_db)):
-    """Hand the file to the browser as an attachment.
+    """Hand the file to the browser.
 
-    The user gets the **original** file — an MKV stays an MKV, it is not the
-    transcoded stream the browser was watching. Range requests are forwarded,
-    so a large file can be resumed after an interrupted download.
+    * A file that lives on the **NAS** is streamed from the NAS: our file
+      name, our Range support, an interrupted download can be resumed.
+    * A **remote** file (a YouTube link, a URL) is not copied through the NAS.
+      The browser is redirected to the source and downloads it from there —
+      the NAS only decides *whether* the file may be handed out.
+
+    The user gets the **original** file: an MKV stays an MKV, it is not the
+    transcoded stream the browser was watching.
+
+    After the redirect the file name comes from the source server (a YouTube
+    download is called `videoplayback.mp4`): a browser drops the `download`
+    attribute as soon as the download leaves the origin, and only the server
+    that sends the bytes can name the file.
     """
     item = await playable_media(request, db, media_id)
     filename = download_filename(item)
@@ -325,12 +337,9 @@ async def download(media_id: int, request: Request,
         )
 
     if item.source_type == "youtube":
-        if item.resolved_state != "resolved" or not item.resolved_url:
-            await resolver.resolve(db, item, force=True)
-        if item.resolved_state != "resolved" or not item.resolved_url:
-            raise HTTPException(
-                502, f"yt-dlp could not resolve this link: {item.resolved_error}")
-        source = item.resolved_url
+        source, error = await resolver.fresh_url(db, item)
+        if not source:
+            raise HTTPException(502, f"yt-dlp could not resolve this link: {error}")
     else:
         source = item.url
         if not source:
@@ -339,15 +348,28 @@ async def download(media_id: int, request: Request,
             raise HTTPException(
                 409, "an HLS stream has no file behind it — it cannot be downloaded")
 
-    return await _proxy_attachment(source, filename, request)
+    if not source.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "only an http(s) source can be downloaded")
+
+    if download_mode() == "proxy":
+        # Some hosts refuse a direct browser request — then the NAS copies the
+        # bytes instead and can also give the file our name.
+        return await _proxy_attachment(source, filename, request)
+
+    # The browser pulls the file from the source itself: the NAS is out of the
+    # data path, the source decides the file name and whether a download can
+    # be resumed.
+    return RedirectResponse(source, status_code=302,
+                            headers={"Cache-Control": "no-store"})
 
 
 async def _proxy_attachment(url: str, filename: str, request: Request) -> Response:
     """Stream a remote file to the browser as an attachment.
 
-    The Range header is forwarded, so an interrupted download can be resumed.
-    The NAS stays in the path (it has to, to add the attachment header and
-    the file name), but it never buffers the file: it copies the bytes.
+    This is the fallback for `WEB_PLAYER_DOWNLOAD_MODE=proxy`. The Range
+    header is forwarded, so an interrupted download can be resumed. The NAS
+    stays in the path (it has to, to add the attachment header and the file
+    name), but it never buffers the file: it copies the bytes.
     """
     import httpx
 
@@ -356,7 +378,8 @@ async def _proxy_attachment(url: str, filename: str, request: Request) -> Respon
         headers["Range"] = request.headers["range"]
 
     client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=30.0, read=600.0), follow_redirects=True)
+        timeout=httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0),
+        follow_redirects=True)
     try:
         upstream = await client.send(
             client.build_request("GET", url, headers=headers), stream=True)

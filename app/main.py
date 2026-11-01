@@ -26,6 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import (
     BASE_URL, COOKIE_SECURE, DATA_DIR, MEDIA_ROOT, SESSION_HOURS, SESSION_SECRET,
+    download_mode,
 )
 from .database import SessionLocal, init_db
 from .routers import console as console_router
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     log.info("web-player %s — media root %s, data %s", "starting", MEDIA_ROOT, DATA_DIR)
     log.info("transcode: %s", hls.transcode_mode())
+    log.info("remote downloads: %s", download_mode())
     task = asyncio.create_task(_reaper())
     try:
         yield

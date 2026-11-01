@@ -54,7 +54,8 @@ a *one bouquet per user* layout) · Settings.
 *Player* — sign in with any password as `family`, `kids` or `guest` (each sees a different
 playlist) · search the playlist · play · jump to a timestamp (`01:23:45`) · ±10 s · keyboard
 shortcuts · resume · **download the file** (the ⬇ button: the original file, not the
-transcoded stream).
+transcoded stream — a file on the NAS is streamed by the NAS, a remote file is
+redirected to its source so the browser downloads it from there).
 
 The demo clips are generated with ffmpeg (test patterns), so the seek really works: the dev
 server answers `Range:` requests, which is exactly what the real backend must do.
@@ -254,11 +255,12 @@ media URL; a panel link may need headers). The bouquet needs the **resolved** me
 | **D1** | Per-user playlist control | **groups + per-item exceptions** | `groups` + `user_groups` + `user_media` tables. The console grid shows the computed result; a click writes one exception row. |
 | **D2** | Enigma2 output | **one global bouquet** | A single `userbouquet.web-player.tv` with every item whose `outputs.enigma2` is on. No per-user bouquets (the code keeps the layout switch, so it can be turned on later). |
 | **D3** | Items the browser cannot play | **on-demand HLS, with VAAPI** | H.264 sources are **copied** (0 % CPU); HEVC/VP9/odd containers are **transcoded with Intel VAAPI** to 1080p H.264. `/dev/dri` is required for the transcode path; a software fallback (libx264) keeps it working without the device. |
-| **D4** | YouTube | **`yt-dlp` resolves it into our own stream** | A YouTube link becomes a normal item: our player, our controls, our seek bar — **and** it can be pushed to the Enigma2 bouquet. The resolver runs in the background, the result is cached in `media.resolved_url`, and a failed resolution is retried on demand and reported in the console. |
+| **D4** | YouTube | **`yt-dlp` resolves it into our own stream** | A YouTube link becomes a normal item: our player, our controls, our seek bar — **and** it can be pushed to the Enigma2 bouquet. The resolver runs in the background, the result is cached in `media.resolved_url`, and a failed resolution is retried on demand and reported in the console. yt-dlp is asked for the best **single** file that has audio *and* video (`b[ext=mp4]/b`), because a redirect can only point at one URL. |
 | **D5** | Extra outputs | **web player only** | Passwords are **hashed** (Argon2/bcrypt) and never stored in plain text. No M3U, no Xtream Codes. |
 | **D6** | Database | **SQLite** | One file in the `/config` volume. No second container, ~0 MB extra RAM, backup = copy one file. The schema stays PostgreSQL-portable. |
 | **D7** | UI stack | **plain server-rendered HTML + vanilla JS** (decided by me, unless you object) | No build step in the image, no node_modules at runtime, easy to debug on a NAS. Video.js is vendored as a static file. |
 | **D8** | VAAPI | **on, with a software fallback** (decided by me) | The container detects `/dev/dri` at start-up and says so in the log; without it, libx264 takes over. |
+| **D9** | Downloading a remote file | **a redirect to the source** (2026-11-01) | A file on the NAS is streamed by the NAS (our name, `Range`, resumable). A YouTube link or a URL is **not** copied through the NAS: the browser is redirected to the source and downloads it from there, so the NAS uses no bandwidth. The source then also names the file (`videoplayback.mp4` for YouTube) and decides whether a download can be resumed — a browser drops our `download` attribute as soon as the download leaves the origin. `WEB_PLAYER_DOWNLOAD_MODE=proxy` switches back to the NAS streaming it. |
 
 **Open items that are *not* decisions but consequences to be aware of:**
 

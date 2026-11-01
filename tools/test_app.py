@@ -63,6 +63,43 @@ def check(condition, msg: str) -> bool:
     return False
 
 
+def fake_resolved(media_id: int, url: str) -> None:
+    """Pretend that yt-dlp resolved a YouTube link.
+
+    The test must not need the internet, so the signed media URL is written
+    into the database directly. The `expire` stamp is far in the future, so
+    the application uses the URL as it is.
+    """
+    import sqlite3
+
+    from app.config import DB_PATH
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "update media set source_type='youtube', resolved_url=?, resolved_state='resolved',"
+            " resolved_at=datetime('now') where id=?", (url, media_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def start_file_server(directory: Path):
+    """A tiny HTTP server, so the proxy mode can be tested without internet."""
+    import functools
+    import threading
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    class Quiet(SimpleHTTPRequestHandler):
+        def log_message(self, *args):  # noqa: ANN002
+            pass
+
+    handler = functools.partial(Quiet, directory=str(directory))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def main() -> int:
     with TestClient(app) as client:
         print("\n== health ==")
@@ -233,6 +270,76 @@ def main() -> int:
         client.post("/player/logout")
         client.post("/player/login", data={"username": "family", "password": "family-secret"})
 
+        print("\n== a remote file is downloaded from the source ==")
+        remote_url = "https://cdn.example.com/movies/remote-clip.mp4"
+        r = client.post("/api/console/media", json={
+            "title": "Remote clip", "source_type": "url", "url": remote_url,
+            "group_id": movies_id, "output_web": True})
+        check(r.status_code == 200, "a URL item can be added")
+        remote_id = r.json()["id"]
+
+        r = client.get(f"/player/download/{remote_id}", follow_redirects=False)
+        check(r.status_code == 302, f"a remote download is a redirect ({r.status_code})")
+        check(r.headers.get("location") == remote_url,
+              f"the redirect points at the source ({r.headers.get('location')})")
+        check(not r.content, f"the NAS sends no bytes of its own ({len(r.content)})")
+
+        r = client.get("/api/player/playlist")
+        entry = next(i for i in r.json()["items"] if i["id"] == remote_id)
+        check(entry.get("downloadable") is True, "a remote file is downloadable")
+        check(entry.get("download_remote") is True, "the playlist marks the item as remote")
+
+        print("\n== a YouTube link is downloaded from the CDN ==")
+        r = client.post("/api/console/media", json={
+            "title": "A YouTube video", "source_type": "url",
+            "url": "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+            "group_id": movies_id, "output_web": True})
+        check(r.status_code == 200, "a YouTube item can be added")
+        yt_id = r.json()["id"]
+        signed = ("https://r1---sn-abc.googlevideo.com/videoplayback"
+                  "?expire=9999999999&id=abc&itag=22")
+        fake_resolved(yt_id, signed)
+        r = client.get(f"/player/download/{yt_id}", follow_redirects=False)
+        check(r.status_code == 302, f"a YouTube download is a redirect ({r.status_code})")
+        check(r.headers.get("location") == signed,
+              f"the redirect points at the CDN ({r.headers.get('location')})")
+
+        print("\n== what cannot be downloaded ==")
+        r = client.post("/api/console/media", json={
+            "title": "A live stream", "source_type": "url",
+            "url": "https://example.com/live/stream.m3u8",
+            "group_id": movies_id, "output_web": True})
+        hls_id = r.json()["id"]
+        r = client.get(f"/player/download/{hls_id}", follow_redirects=False)
+        check(r.status_code == 409, f"an HLS stream cannot be downloaded ({r.status_code})")
+
+        r = client.post("/api/console/media", json={
+            "title": "A local file by URL", "source_type": "url",
+            "url": "file:///etc/passwd", "group_id": movies_id, "output_web": True})
+        scheme_id = r.json()["id"]
+        r = client.get(f"/player/download/{scheme_id}", follow_redirects=False)
+        check(r.status_code == 400, f"only http(s) sources are handed out ({r.status_code})")
+
+        print("\n== the proxy mode streams the file through the NAS ==")
+        server = start_file_server(MEDIA)
+        port = server.server_address[1]
+        os.environ["WEB_PLAYER_DOWNLOAD_MODE"] = "proxy"
+        try:
+            r = client.post("/api/console/media", json={
+                "title": "Served through the proxy", "source_type": "url",
+                "url": f"http://127.0.0.1:{port}/clip.mp4",
+                "group_id": movies_id, "output_web": True})
+            proxy_id = r.json()["id"]
+            r = client.get(f"/player/download/{proxy_id}", follow_redirects=False)
+            check(r.status_code == 200, f"the proxy answers with the file ({r.status_code})")
+            check("attachment" in r.headers.get("content-disposition", ""),
+                  f"the proxy adds the attachment header ({r.headers.get('content-disposition')})")
+            check(len(r.content) > 0, f"the bytes arrive ({len(r.content)})")
+        finally:
+            os.environ["WEB_PLAYER_DOWNLOAD_MODE"] = "redirect"
+            server.shutdown()
+            server.server_close()
+
         print("\n== the Enigma2 bouquet ==")
         r = client.get("/api/console/bouquet/preview")
         check(r.status_code == 200, f"the bouquet preview answers ({r.status_code})")
@@ -260,7 +367,7 @@ def main() -> int:
         r = client.get("/api/console/overview")
         check(r.status_code == 200, "the dashboard answers")
         data = r.json()
-        check(data["media_count"] == 1, f"the dashboard counts the media ({data['media_count']})")
+        check(data["media_count"] == 6, f"the dashboard counts the media ({data['media_count']})")
         check(data["user_count"] == 3, f"the dashboard counts the users ({data['user_count']})")
 
         print("\n== a disabled user loses access at once ==")

@@ -14,11 +14,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import YTDLP
+from ..config import YTDLP, YTDLP_FORMAT
 from ..models import Media
 
 log = logging.getLogger("web-player.resolver")
@@ -43,6 +45,7 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
     cmd = [
         YTDLP, "--no-playlist", "--no-warnings", "--dump-json",
         "--no-check-certificate",
+        "-f", YTDLP_FORMAT,
         item.url,
     ]
     try:
@@ -76,7 +79,7 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
         await db.commit()
         return {"state": "failed", "error": item.resolved_error}
 
-    url = info.get("url")
+    url, fmt = _pick_format(info)
     if not url:
         item.resolved_state = "failed"
         item.resolved_error = "yt-dlp found no playable stream"
@@ -90,9 +93,14 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
     item.resolved_meta = json.dumps({
         "title": info.get("title"),
         "duration": info.get("duration"),
-        "ext": info.get("ext"),
-        "quality": info.get("height") and f"{info.get('height')}p" or info.get("format_note"),
-        "filesize": info.get("filesize") or info.get("filesize_approx"),
+        "ext": fmt.get("ext") or info.get("ext"),
+        "quality": (fmt.get("height") and f"{fmt.get('height')}p") or info.get("format_note"),
+        "filesize": fmt.get("filesize") or fmt.get("filesize_approx")
+        or info.get("filesize") or info.get("filesize_approx"),
+        "format_id": fmt.get("format_id") or info.get("format_id"),
+        "audio": fmt.get("acodec"),
+        "video": fmt.get("vcodec"),
+        "separate_streams": bool(info.get("requested_formats")),
     })
     if info.get("title") and not item.title:
         item.title = info["title"][:300]
@@ -101,6 +109,62 @@ async def resolve(db: AsyncSession, item: Media, *, force: bool = False) -> dict
     item.delivery = "direct"
     await db.commit()
     return {"state": "resolved", "url": url, "at": item.resolved_at.isoformat()}
+
+
+def _has_audio_and_video(fmt: dict) -> bool:
+    """Does this format carry both a picture and a sound track?"""
+    return (fmt.get("vcodec") not in (None, "none")
+            and fmt.get("acodec") not in (None, "none"))
+
+
+def _pick_format(info: dict) -> tuple[str | None, dict]:
+    """One concrete media URL out of a yt-dlp info dict.
+
+    yt-dlp usually answers with a **merged** result for a YouTube link: a
+    video stream and an audio stream as two separate URLs. A redirect can only
+    point at one file, so a format that already carries both is preferred; if
+    there is none, the video stream is used.
+    """
+    formats = info.get("requested_formats") or []
+    if formats:
+        for fmt in formats:
+            if _has_audio_and_video(fmt) and fmt.get("url"):
+                return fmt["url"], fmt
+        for fmt in formats:
+            if fmt.get("url"):
+                return fmt["url"], fmt
+    url = info.get("url")
+    return (url, info) if url else (None, {})
+
+
+def url_expired(url: str) -> bool:
+    """Has the signed URL expired?
+
+    YouTube hands out links with an `expire` stamp in the query. When it has
+    passed, the link is dead and the item has to be resolved again.
+    """
+    try:
+        stamp = parse_qs(urlsplit(url).query).get("expire", [""])[0]
+        return bool(stamp.isdigit()) and int(stamp) < int(time.time())
+    except (ValueError, IndexError, TypeError):
+        return False
+
+
+async def fresh_url(db: AsyncSession, item: Media) -> tuple[str | None, str | None]:
+    """A live media URL for this item — resolved now when the old one is dead.
+
+    Returns `(url, error)`. A YouTube link is signed and expires, so a
+    download that happens hours after the last visit gets a fresh one.
+    """
+    if item.source_type != "youtube":
+        return item.url, None
+    if (item.resolved_state == "resolved" and item.resolved_url
+            and not url_expired(item.resolved_url)):
+        return item.resolved_url, None
+    await resolve(db, item, force=True)
+    if item.resolved_state != "resolved" or not item.resolved_url:
+        return None, item.resolved_error or "yt-dlp could not resolve this link"
+    return item.resolved_url, None
 
 
 def _is_fresh(item: Media) -> bool:

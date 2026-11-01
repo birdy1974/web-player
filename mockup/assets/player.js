@@ -251,7 +251,11 @@
     const canDownload = current.probe.delivery !== 'embed'
       && !(current.source === 'url' && /\.m3u8?($|\?)/i.test(current.url || ''));
     if (!canDownload) { toast('This item cannot be downloaded', 'warn'); return; }
-    toast('The real application serves the original file with a Content-Disposition: attachment header', 'ok');
+    if (current.source === 'local') {
+      toast('The real application serves the original file from the NAS with a Content-Disposition: attachment header', 'ok');
+    } else {
+      toast('The real application redirects to the source — the browser downloads the file from there (the source names it)', 'ok');
+    }
   });
   $('#btn-back').addEventListener('click', () => step(-10));
   $('#btn-fwd').addEventListener('click', () => step(10));

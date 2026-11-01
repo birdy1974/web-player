@@ -94,6 +94,31 @@ service type (5002) on the Enigma2 box; in the browser the subtitle track is
 burned in by the transcode or dropped — the browser player does not read the
 subtitle sidecar of an MKV.
 
+### Downloads
+
+The ⬇ button in the public player hands over the **original** file — never the
+transcoded stream. How it gets to the user depends on where the file lives:
+
+| the file | what happens | the file name |
+|---|---|---|
+| on the NAS | the NAS streams it (`Range` support, resumable) | our name (`Movie.mkv`) |
+| a URL / YouTube | **redirect** — the browser downloads it from the source | the source decides (`videoplayback.mp4` for YouTube) |
+
+The redirect keeps the NAS out of the data path: a remote download costs no
+bandwidth on the NAS at all. The price is the file name and the resuming —
+both are then up to the source server.
+
+Two settings in `.env`:
+
+* `WEB_PLAYER_DOWNLOAD_MODE=redirect` (default) or `proxy`. With `proxy` the
+  NAS streams the remote file itself: our file name, but the traffic runs
+  through the NAS. Use it for hosts that refuse a direct browser request.
+* `WEB_PLAYER_YTDLP_FORMAT=b[ext=mp4]/b` — the format yt-dlp picks for a
+  YouTube link. The default is the best **single** file that has both audio
+  and video, because a redirect can only point at one URL. YouTube offers
+  such a file up to 720p; higher resolutions need the audio and the video
+  merged first, which only the NAS could do.
+
 ---
 
 ## 4. Users and playlists

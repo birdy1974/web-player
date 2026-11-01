@@ -65,6 +65,23 @@ FFMPEG = os.environ.get("WEB_PLAYER_FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("WEB_PLAYER_FFPROBE", "ffprobe")
 YTDLP = os.environ.get("WEB_PLAYER_YTDLP", "yt-dlp")
 
+# Which format yt-dlp picks. The default is the best **single** file that has
+# both audio and video ("b[ext=mp4]/b"): a redirect needs one URL, and a
+# merged video+audio download would have to be built by the NAS.
+YTDLP_FORMAT = os.environ.get("WEB_PLAYER_YTDLP_FORMAT", "b[ext=mp4]/b").strip() or "b[ext=mp4]/b"
+
+# How a remote file is handed to the browser:
+#   "redirect" — the browser downloads it from the source (CDN) itself;
+#   "proxy"    — the NAS streams the bytes (needed for hosts that refuse a
+#                direct browser request, or when the file name matters more
+#                than the bandwidth).
+
+
+def download_mode() -> str:
+    """The mode, read per request so it can be changed without a restart."""
+    mode = os.environ.get("WEB_PLAYER_DOWNLOAD_MODE", "redirect").strip().lower()
+    return mode if mode in ("redirect", "proxy") else "redirect"
+
 VIDEO_EXTENSIONS = {
     ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".flv",
     ".mpg", ".mpeg", ".m2ts", ".ts", ".mts", ".vob", ".3gp", ".ogv",

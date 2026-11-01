@@ -100,7 +100,8 @@
       const cls = m.delivery === 'direct' ? 'ok' : (m.delivery === 'hls' ? 'warn' : 'purple');
       const dl = m.downloadable
         ? `<a class="dl" href="${esc(m.download_url)}" download="${esc(m.download_name || '')}"
-             title="Download the original file" aria-label="Download ${esc(m.title)}">⬇</a>`
+             title="${m.download_remote ? 'Download straight from the source' : 'Download the original file'}"
+             aria-label="Download ${esc(m.title)}">⬇</a>`
         : `<span class="dl" aria-disabled="true" title="This item cannot be downloaded">⬇</span>`;
       return `<div class="pitem ${current && current.id === m.id ? 'on' : ''}" data-id="${m.id}">
         ${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ''}
@@ -172,7 +173,9 @@
       dl.href = item.download_url;
       dl.setAttribute('download', item.download_name || '');
       dl.removeAttribute('aria-disabled');
-      dl.title = 'Download the original file (' + (item.download_name || '') + ')';
+      dl.title = item.download_remote
+        ? 'Download straight from the source — the source names the file'
+        : 'Download the original file (' + (item.download_name || '') + ')';
       dl.classList.remove('mut');
     } else {
       dl.removeAttribute('href');

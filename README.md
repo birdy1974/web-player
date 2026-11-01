@@ -46,7 +46,16 @@ web-player/
 * **Jump to a timestamp** (`01:23:45`) — exact for a progressive file, accurate
   to one segment (4 s) for an on-demand HLS stream.
 * **Download the file** — the button next to the title hands over the *original*
-  file (an MKV stays an MKV), with a proper file name and a resumable transfer.
+  file (an MKV stays an MKV).
+  * A file on the NAS is streamed by the NAS: our file name, `Range` support,
+    an interrupted download can be resumed.
+  * A **remote** file (a YouTube link, a URL) is **not** copied through the
+    NAS. The browser gets a redirect and downloads it from the source (the
+    CDN), so the NAS uses no bandwidth for it. The source then also names the
+    file (a YouTube download is called `videoplayback.mp4`) — a browser drops
+    our `download` attribute as soon as the download leaves the origin.
+  * `WEB_PLAYER_DOWNLOAD_MODE=proxy` switches remote downloads back to the
+    NAS streaming them (our file name, but the traffic runs through the NAS).
 * Search the playlist, resume where you left off, auto-play the next title.
 
 ---
