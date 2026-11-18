@@ -157,6 +157,15 @@ const click = (el) => el.dispatchEvent(new win.MouseEvent('click', { bubbles: tr
   check(!!dashLog, 'the dashboard has a line for the log');
   check(dashLog.textContent.includes('error(s)'), `the errors are counted (${dashLog.textContent.trim()})`);
 
+  console.log('\n== max simultaneous streams ==');
+  click($('[data-tab="users"]'));
+  click($('#u-table [data-uedit="1"]'));
+  const maxStreams = $('#u-max');
+  check(maxStreams.value === '2', 'editing a user keeps their current value');
+  maxStreams.value = '20';
+  check(maxStreams.max === '20' && maxStreams.checkValidity(), 'the user editor accepts 20 simultaneous streams');
+  click($('#modal-root .x'));
+
   console.log('\n== the log tab ==');
   const logTab = $$('#tabs .tab').find(t => t.dataset.tab === 'logs');
   check(!!logTab, 'the console has a "Logs" tab');

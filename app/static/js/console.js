@@ -700,7 +700,7 @@
       <div class="grid3">
         <label class="field"><span>Username</span><input type="text" id="u-name" value="${esc(user.name)}"></label>
         <label class="field"><span>Password</span><input type="password" id="u-pw" placeholder="${isNew ? 'required' : 'unchanged'}"></label>
-        <label class="field"><span>Max simultaneous streams</span><input type="number" id="u-max" min="1" max="10" value="${esc(user.max_streams)}"></label>
+        <label class="field"><span>Max simultaneous streams</span><input type="number" id="u-max" min="1" max="20" value="${esc(user.max_streams)}"></label>
         <label class="field"><span>Expires (YYYY-MM-DD, empty = never)</span><input type="text" id="u-exp" value="${esc(user.expires_at || '')}"></label>
         <label class="field"><span>Status</span>
           <div class="row" style="gap:9px;padding-top:4px">

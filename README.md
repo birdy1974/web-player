@@ -51,7 +51,9 @@ web-player/
 
 **② Public web player — password protected** (`/player`)
 
-* The playlist of the signed-in user and nothing else.
+* After sign-in, a waiting screen appears while the signed-in user's playlist and the player controls
+  load in parallel. The first title is selected, but no video is loaded until you press **Play** or
+  choose a title from the playlist. On mobile, the playlist sits directly below the video.
 * Video.js: play/pause, ±10 s, speed, picture-in-picture, fullscreen, keyboard control.
 * **Jump to a timestamp** (`01:23:45`) — exact for a progressive file, accurate
   to one segment (4 s) for an on-demand HLS stream.
@@ -66,7 +68,7 @@ web-player/
     our `download` attribute as soon as the download leaves the origin.
   * `WEB_PLAYER_DOWNLOAD_MODE=proxy` switches remote downloads back to the
     NAS streaming them (our file name, but the traffic runs through the NAS).
-* Search the playlist, resume where you left off, auto-play the next title.
+* Search the playlist and resume where you left off. Auto-play next is off unless you turn it on.
 * **The type of every source travels with it.** Video.js asks the browser
   whether it *can* play a source before it requests it, and a URL without a
   file extension (`/player/stream/7/direct`) cannot be judged — the browser

@@ -163,6 +163,11 @@ def main() -> int:
         check(r.status_code == 400, "a user without a password is refused")
         r = client.get("/api/console/users")
         check(len(r.json()["items"]) == 2, "the user list shows the administrator and the new user")
+        r = client.put(f"/api/console/users/{family_id}", json={"max_streams": 20})
+        check(r.status_code == 200, "a user's max simultaneous streams can be set to 20")
+        users = client.get("/api/console/users").json()["items"]
+        check(any(u["id"] == family_id and u["max_streams"] == 20 for u in users),
+              "the console saves and returns the per-user value of 20")
 
         print("\n== the library is scanned ==")
         r = client.post("/api/console/media/scan", json={})
@@ -221,11 +226,19 @@ def main() -> int:
         client.post("/player/logout")
         r = client.get("/api/player/playlist")
         check(r.status_code == 401, f"the playlist refuses an anonymous caller ({r.status_code})")
+        r = client.get("/player", follow_redirects=False)
+        check(r.status_code == 302 and r.headers.get("location") == "/player/login",
+              "the player redirects an anonymous visitor to sign in")
         r = client.post("/player/login", data={"username": "family", "password": "wrong"})
-        check(r.status_code == 401, "a wrong password is refused")
+        check(r.status_code == 401 and 'id="player-startup"' not in r.text,
+              "a wrong password is refused without showing the player")
         r = client.post("/player/login", data={"username": "family", "password": "family-secret"},
                         follow_redirects=False)
-        check(r.status_code in (302, 307), "the right password signs in")
+        check(r.status_code == 302 and r.headers.get("location") == "/player",
+              "the right password redirects to the player")
+        r = client.get("/player")
+        check(r.status_code == 200 and 'id="player-startup"' in r.text and 'id="player-content" hidden' in r.text,
+              "the signed-in page serves the waiting screen before loading the playlist")
         r = client.get("/api/player/playlist")
         check(r.status_code == 200, "the playlist answers")
         playlist = r.json()["items"]
