@@ -52,19 +52,46 @@
   };
 
   /* ------------------------------------------------------------------ */
-  /* playlist                                                           */
+  /* startup and playlist                                               */
   /* ------------------------------------------------------------------ */
+  function loadPlaybackAssets() {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = '/static/vendor/video-js.min.css';
+    const js = document.createElement('script');
+    js.src = '/static/vendor/video.min.js';
+
+    // Load both without blocking the waiting screen's first paint.
+    return Promise.all([css, js].map(asset => new Promise((resolve, reject) => {
+      asset.onload = resolve;
+      asset.onerror = () => reject(new Error('Could not load a playback asset'));
+      document.head.appendChild(asset);
+    })));
+  }
+
   async function load() {
     try {
-      const data = await api('/api/player/playlist');
+      const [data] = await Promise.all([api('/api/player/playlist'), loadPlaybackAssets()]);
+      if (typeof window.videojs !== 'function') throw new Error('Video.js is unavailable');
       items = data.items;
       $('#who').textContent = 'signed in as ' + data.user.name;
       renderFilters();
+      if (items.length) {
+        // Select the first title without attaching a media source or an embed.
+        selectTitle(items[0]);
+        $('#player-empty').hidden = true;
+        const start = $('#btn-play-selected');
+        start.setAttribute('aria-label', 'Play ' + current.title);
+        start.classList.remove('hidden');
+      }
       renderList();
-      if (items.length) play(items[0]);
-      else toast('No media is shared with this account', 'warn');
-    } catch (e) {
-      toast('Could not load the playlist: ' + e.message, 'err');
+      $('#player-startup').hidden = true;
+      $('#player-content').hidden = false;
+    } catch {
+      $('#startup-spinner').hidden = true;
+      $('#startup-title').textContent = 'Could not load the player';
+      $('#startup-status').textContent = 'Try again to reload the player and your playlist.';
+      $('#startup-retry').classList.remove('hidden');
     }
   }
 
@@ -104,8 +131,9 @@
              title="${m.download_remote ? 'Download straight from the source' : 'Download the original file'}"
              aria-label="Download ${esc(m.title)}">⬇</a>`
         : `<span class="dl" aria-disabled="true" title="This item cannot be downloaded">⬇</span>`;
-      return `<div class="pitem ${current && current.id === m.id ? 'on' : ''}" data-id="${m.id}">
-        ${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ''}
+      const selected = current && current.id === m.id;
+      return `<div class="pitem${selected ? ' on' : ''}" data-id="${m.id}"${selected ? ' aria-current="true"' : ''}>
+        ${m.poster ? `<img src="${esc(m.poster)}" alt="" loading="lazy" decoding="async">` : ''}
         <div class="grow">
           <div class="nm trunc">${esc(m.title)}</div>
           <div class="mt">${esc(m.year || '')} · ${fmtDuration(m.duration_s)} ·
@@ -115,7 +143,8 @@
         </div>
         ${dl}
       </div>`;
-    }).join('') : '<div class="mut center" style="padding:26px 14px">Nothing matches.</div>';
+    }).join('') : `<div class="mut center" style="padding:26px 14px">${
+      items.length ? 'Nothing matches.' : 'No media is shared with this account.'}</div>`;
 
     $$('#p-list .pitem').forEach(el => el.addEventListener('click', (e) => {
       if (e.target.closest('.dl')) return;      // the download button plays nothing
@@ -132,7 +161,7 @@
     if (player) return player;
     player = videojs('v', {
       controls: true,
-      preload: 'metadata',
+      preload: 'none',
       fluid: true,
       playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
       html5: { vhs: { overrideNative: true } },
@@ -179,12 +208,8 @@
     return player;
   }
 
-  function play(item) {
-    if (!item) return;
+  function selectTitle(item) {
     current = item;
-    hlsFallback = false;
-    renderList();
-
     $('#now-title').textContent = item.title;
     const bits = [item.year, fmtDuration(item.duration_s),
       item.width ? `${item.width}×${item.height}` : null,
@@ -210,6 +235,16 @@
       dl.title = 'This item cannot be downloaded (an HLS stream has no file behind it)';
       dl.classList.add('mut');
     }
+  }
+
+  function play(item) {
+    if (!item) return;
+    if (item !== current) {
+      selectTitle(item);
+      renderList();
+    }
+    hlsFallback = false;
+    $('#player-idle').classList.add('hidden');
 
     if (item.delivery === 'embed') {
       $('#v').classList.add('hidden');
@@ -295,14 +330,24 @@
     if (n >= 0 && n < items.length) play(items[n]);
     else toast('End of the playlist', 'warn');
   }
+  $('#btn-play-selected').addEventListener('click', () => play(current));
   $('#btn-next').addEventListener('click', () => move(1));
   $('#btn-prev').addEventListener('click', () => move(-1));
 
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const tag = e.target.tagName;
+    if ($('#player-content').hidden || e.defaultPrevented || tag === 'INPUT' || tag === 'TEXTAREA') return;
     const k = e.key.toLowerCase();
-    if (k === ' ') { e.preventDefault(); if (player) player.paused() ? player.play() : player.pause(); }
-    else if (k === 'arrowleft') { e.preventDefault(); step(-10); }
+    if (k === ' ' && current && tag !== 'BUTTON' && tag !== 'A') {
+      if (!$('#player-idle').classList.contains('hidden')) {
+        e.preventDefault();
+        play(current);
+      } else if (player && current.delivery !== 'embed') {
+        e.preventDefault();
+        if (player.paused()) player.play().catch(() => {});
+        else player.pause();
+      }
+    } else if (k === 'arrowleft') { e.preventDefault(); step(-10); }
     else if (k === 'arrowright') { e.preventDefault(); step(10); }
     else if (k === 'j') step(-30);
     else if (k === 'l') step(30);
