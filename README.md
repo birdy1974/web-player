@@ -133,10 +133,11 @@ npm install && npm test                    # the mock-up + the console + the pla
 .venv/bin/python tools/test_app.py         # the application: the whole API, end to end
 ```
 
-Both run in **GitHub Actions** on every push and every pull request
-(`.github/workflows/ci.yml`): the two test suites, and the real Docker image is
-built — the one check that cannot be done on a machine without Docker. On
-`main` the image is published to GitHub Container Registry
+Both suites run in **GitHub Actions** on pull requests and pushes to `main`
+(`.github/workflows/ci.yml`). The test job uses cached, checksum-verified builds
+of FFmpeg and ffprobe instead of installing the Ubuntu FFmpeg package. The
+Docker job still builds the production image with FFmpeg and VAAPI drivers.
+On `main` the image is published to GitHub Container Registry
 (`ghcr.io/birdy1974/web-player:latest`), so the NAS can pull it instead of
 building it there (see [docs/SYNO.md](docs/SYNO.md) §2.3).
 
