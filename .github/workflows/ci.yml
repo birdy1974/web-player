@@ -32,6 +32,8 @@ jobs:
   tests:
     name: tests
     runs-on: ubuntu-latest
+    env:
+      TEST_FFMPEG_RELEASE: b6.1.1
     steps:
       - uses: actions/checkout@v4
 
@@ -45,10 +47,41 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # ffprobe reads the test clip. The runner image already has ffmpeg, but
-      # the package is named explicitly so the job does not depend on it.
-      - name: install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # The tests need real FFmpeg tools, not the system package and its
+      # dependencies. Keep the full FFmpeg install in the runtime Docker image.
+      - name: Cache test FFmpeg downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/web-player-ffmpeg/downloads
+          key: test-ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ env.TEST_FFMPEG_RELEASE }}
+
+      - name: Set up FFmpeg and ffprobe for tests
+        shell: bash
+        run: |
+          install_dir="$RUNNER_TEMP/web-player-ffmpeg"
+          release_url="https://github.com/eugeneware/ffmpeg-static/releases/download/$TEST_FFMPEG_RELEASE"
+          mkdir -p "$install_dir/downloads" "$install_dir/bin"
+          cd "$install_dir/downloads"
+
+          install_tool() {
+            local name="$1" digest="$2"
+            local asset="$name-linux-x64.gz"
+            if [[ -f "$asset" ]] && printf '%s  %s\n' "$digest" "$asset" | sha256sum --check --status; then
+              echo "Using cached $name"
+            else
+              curl --fail --silent --show-error --location --connect-timeout 10 \
+                --max-time 60 --retry 2 --retry-max-time 90 --output "$asset" "$release_url/$asset"
+              printf '%s  %s\n' "$digest" "$asset" | sha256sum --check --strict
+            fi
+            gzip -dc "$asset" > "$install_dir/bin/$name"
+            chmod +x "$install_dir/bin/$name"
+            "$install_dir/bin/$name" -version
+          }
+
+          # SHA-256 digests of the compressed assets in the pinned release.
+          install_tool ffmpeg bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa
+          install_tool ffprobe 25d9b6ccb05e3d9de9e04e31e2506d8dd7f9f0418981965ac6df12e8d3afd067
+          printf '%s\n' "$install_dir/bin" >> "$GITHUB_PATH"
 
       - run: pip install -r requirements.txt
       - run: npm ci
