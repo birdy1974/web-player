@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,10 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import (
     FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse,
 )
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..assets import templates
 from ..config import (
     BASE_URL, MAX_STREAMS, MEDIA_ROOT, PUBLIC_URL, SESSION_SECRET, download_mode,
 )
@@ -34,7 +34,6 @@ from ..services.visibility import load_visibility, visible_media
 log = logging.getLogger("web-player.player")
 
 router = APIRouter(tags=["player"])
-templates = Jinja2Templates(directory="app/templates")
 
 
 # --------------------------------------------------------------------------
@@ -124,15 +123,17 @@ async def player_logout(request: Request):
 async def player_page(request: Request):
     if not request.session.get("player_user"):
         return RedirectResponse("/player/login", status_code=302)
-    return templates.TemplateResponse(request, "player.html", {"title": "web-player"})
+    return templates.TemplateResponse(request, "player.html", {"title": "web-player"},
+                                      headers={"Cache-Control": "no-store"})
 
 
 # --------------------------------------------------------------------------
 # playlist
 # --------------------------------------------------------------------------
 @router.get("/api/player/playlist")
-async def playlist(request: Request, db: AsyncSession = Depends(get_db)):
+async def playlist(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     user = await session_user(request, db)
+    response.headers["Cache-Control"] = "no-store"
     items = await visible_media(db, user.id)
     groups = {g.id: g.name for g in (
         await db.execute(select(__import__("app.models", fromlist=["Group"]).Group))).scalars().all()}
@@ -253,21 +254,21 @@ async def set_progress(request: Request, db: AsyncSession = Depends(get_db)):
 # --------------------------------------------------------------------------
 # streaming
 # --------------------------------------------------------------------------
-async def playable_media(request: Request, db: AsyncSession, media_id: int) -> Media:
-    """The item, if this session's user may watch it."""
+async def playable_media(request: Request, db: AsyncSession, media_id: int) -> tuple[Media, User]:
+    """The item and the session's user, if this user may watch it."""
     user = await session_user(request, db)
     vis = await load_visibility(db, user.id)
     item = await db.get(Media, media_id)
     if item is None or not vis.allowed(item):
         raise HTTPException(404, "not in your playlist")
-    return item
+    return item, user
 
 
 @router.get("/player/stream/{media_id}/direct")
 async def stream_direct(media_id: int, request: Request,
                         db: AsyncSession = Depends(get_db)):
     """Serve the file itself with HTTP Range support (exact seeking, 0 % CPU)."""
-    item = await playable_media(request, db, media_id)
+    item, _ = await playable_media(request, db, media_id)
 
     source: str | None = None
     filename = "video.mp4"
@@ -369,7 +370,7 @@ async def download(media_id: int, request: Request,
     attribute as soon as the download leaves the origin, and only the server
     that sends the bytes can name the file.
     """
-    item = await playable_media(request, db, media_id)
+    item, _ = await playable_media(request, db, media_id)
     filename = download_filename(item)
 
     if item.source_type == "local":
@@ -492,35 +493,38 @@ def _ranged_file(path: Path, request: Request, filename: str) -> Response:
 async def stream_playlist(media_id: int, request: Request,
                            db: AsyncSession = Depends(get_db)):
     """The on-demand HLS playlist for an item the browser cannot play."""
-    item = await playable_media(request, db, media_id)
-    user = await session_user(request, db)
+    item, user = await playable_media(request, db, media_id)
 
+    session = await _hls_session(db, item, user)
+    playlist = hls.build_playlist(session)
+    log.info("HLS playlist — media=%s (%r) for %s: %s segment(s) of %ss",
+             item.id, item.title, user.name, session.total_segments, session.seg_seconds)
+    return Response(playlist, media_type="application/vnd.apple.mpegurl",
+                    headers={"Cache-Control": "no-store"})
+
+
+async def _hls_session(db: AsyncSession, item: Media, user: User) -> hls.HLSSession:
     source = await _hls_source(db, item)
     if source is None:
         log.warning("HLS refused — media=%s (%r): no source", item.id, item.title)
         raise HTTPException(404, "this item cannot be served as HLS")
 
     duration = item.duration_s or 0.0
-    if not duration:
+    if not duration and item.source_type == "local":
         info = await library.probe_one(db, item)
         duration = (info or {}).get("duration_s") or 0.0
+    if not math.isfinite(duration) or duration <= 0:
+        raise HTTPException(422, "a finite duration is needed for on-demand HLS")
 
-    session = await hls.get_session(media_id, user.id, source, duration,
-                                    _codec_of(item))
-    playlist = hls.build_playlist(session)
-    log.info("HLS playlist — media=%s (%r) for %s: %s segment(s) of %ss, source %s",
-             item.id, item.title, user.name, session.total_segments,
-             session.seg_seconds, source)
-    return Response(playlist, media_type="application/vnd.apple.mpegurl",
-                    headers={"Cache-Control": "no-store"})
-
-
-def _codec_of(item: Media) -> str | None:
     try:
         probe = json.loads(item.probe or "{}")
     except (TypeError, ValueError):
-        return None
-    return probe.get("video")
+        probe = {}
+    if not isinstance(probe, dict):
+        probe = {}
+    codec = probe.get("video")
+    return await hls.get_session(item.id, user.id, source, duration, codec,
+                                 audio_only=bool(probe.get("audio")) and not codec)
 
 
 async def _hls_source(db: AsyncSession, item: Media) -> str | None:
@@ -540,17 +544,14 @@ async def _hls_source(db: AsyncSession, item: Media) -> str | None:
 async def stream_segment(media_id: int, index: int, request: Request,
                          db: AsyncSession = Depends(get_db)):
     """One HLS segment — produced on demand by ffmpeg."""
-    item = await playable_media(request, db, media_id)
-    user = await session_user(request, db)
-
-    source = await _hls_source(db, item)
-    if source is None:
-        raise HTTPException(404, "this item cannot be served as HLS")
-    duration = item.duration_s or 0.0
-    session = await hls.get_session(media_id, user.id, source, duration, _codec_of(item))
-
+    item, user = await playable_media(request, db, media_id)
+    if index < 0:
+        raise HTTPException(404, "no such segment")
+    session = await _hls_session(db, item, user)
+    if index >= session.total_segments:
+        raise HTTPException(404, "no such segment")
     path = await hls.ensure_segment(session, index)
-    if path is None or not path.exists():
+    if path is None:
         raise HTTPException(504, session.failed or "the segment could not be produced")
     return FileResponse(str(path), media_type="video/mp2t",
                         headers={"Cache-Control": "no-store"})
@@ -559,7 +560,7 @@ async def stream_segment(media_id: int, index: int, request: Request,
 @router.get("/player/poster/{media_id}")
 async def item_poster(media_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     """The poster of one item (checked against the session)."""
-    item = await playable_media(request, db, media_id)
+    item, _ = await playable_media(request, db, media_id)
     if not item.poster:
         raise HTTPException(404, "no poster")
     from ..config import POSTER_DIR

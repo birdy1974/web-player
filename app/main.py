@@ -22,9 +22,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from .assets import PlayerAssets, STATIC_DIR
 from .config import (
     BASE_URL, COOKIE_SECURE, DATA_DIR, MEDIA_ROOT, SESSION_HOURS, SESSION_SECRET,
     download_mode,
@@ -36,10 +36,6 @@ from .services import hls, logs
 
 logs.setup()
 log = logging.getLogger("web-player")
-
-BASE_DIR = Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-static_dir = BASE_DIR / "static"
 
 
 @asynccontextmanager
@@ -147,7 +143,10 @@ app.add_middleware(
     https_only=COOKIE_SECURE,
 )
 
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+# Versioned assets are public and must never emit a session cookie. Serve them
+# outside SessionMiddleware; leave all other requests on the existing path.
+app.add_middleware(PlayerAssets)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(console_router.router)
 app.include_router(player_router.router)
