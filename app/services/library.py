@@ -161,12 +161,13 @@ async def probe(path: str | Path) -> dict | None:
     except ValueError:
         return None
 
-    video = audio = None
+    video = audio = video_pix_fmt = None
     width = height = None
     for stream in data.get("streams", []):
         kind = stream.get("codec_type")
         if kind == "video" and not video:
             video = (stream.get("codec_name") or "").lower()
+            video_pix_fmt = stream.get("pix_fmt")
             width = stream.get("width")
             height = stream.get("height")
         elif kind == "audio" and not audio:
@@ -184,6 +185,7 @@ async def probe(path: str | Path) -> dict | None:
     return {
         "container": container,
         "video": video,
+        "video_pix_fmt": video_pix_fmt,
         "audio": audio,
         "width": width,
         "height": height,

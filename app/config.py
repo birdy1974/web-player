@@ -68,6 +68,11 @@ LOG_LINES = max(100, _int("WEB_PLAYER_LOG_LINES", 2000))
 LOG_MAX_BYTES = max(256 * 1024, _int("WEB_PLAYER_LOG_MAX_BYTES", 5 * 1024 * 1024))
 
 TRANSCODE_MODE = os.environ.get("WEB_PLAYER_TRANSCODE", "auto").strip().lower()
+# Some VAAPI drivers support only constant-quality encoding. Keep the
+# bitrate-controlled profile unless the operator explicitly opts out of it.
+VAAPI_RATE_CONTROL = (
+    "cqp" if os.environ.get("WEB_PLAYER_VAAPI_RATE_CONTROL", "").strip().lower() == "cqp" else "bitrate"
+)
 HLS_SEGMENT = max(2, _int("WEB_PLAYER_HLS_SEGMENT", 4))
 MAX_STREAMS = max(1, _int("WEB_PLAYER_MAX_STREAMS", 3))
 HLS_DIR = DATA_DIR / "hls"

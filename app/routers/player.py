@@ -524,6 +524,7 @@ async def _hls_session(db: AsyncSession, item: Media, user: User) -> hls.HLSSess
         probe = {}
     codec = probe.get("video")
     return await hls.get_session(item.id, user.id, source, duration, codec,
+                                 video_pix_fmt=probe.get("video_pix_fmt"),
                                  audio_only=bool(probe.get("audio")) and not codec)
 
 
