@@ -162,29 +162,44 @@ def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
         def segment(index: int):
             return client.get(f"/player/segment/{media_id}/{index}.ts")
 
-        def inspect_segment(index: int, payload: bytes) -> tuple[float, float]:
-            path = TMP / f"hls-{index}.ts"
-            path.write_bytes(payload)
-            result = subprocess.run([
-                "ffmpeg", "-hide_banner", "-nostdin", "-copyts", "-i", str(path),
-                "-map", "0:v:0", "-vf", "showinfo", "-frames:v", "1", "-an", "-f", "null", "-",
-            ], capture_output=True, text=True, check=True)
-            check("Video: h264" in result.stderr and "iskey:1" in result.stderr,
-                  f"segment {index} decodes as H.264 from its first keyframe")
-            timing = re.search(r"Duration: (\d+):(\d+):([\d.]+), start: ([\d.]+)", result.stderr)
-            assert timing, result.stderr
-            hours, minutes, seconds, start = map(float, timing.groups())
-            duration = 3600 * hours + 60 * minutes + seconds
+        def inspect_segment(index: int, payload: bytes) -> float:
+            # Inspect the fixture's single MPEG-TS video stream directly.
+            # Some static FFmpeg builds crash when opening MPEG-TS as input.
+            video_pid = None
+            first_frame = bytearray()
+            timestamps = []
+            assert payload and len(payload) % 188 == 0, f"segment {index} is not complete MPEG-TS"
+            for offset in range(0, len(payload), 188):
+                packet = payload[offset:offset + 188]
+                assert packet[0] == 0x47, f"segment {index} lost MPEG-TS packet sync"
+                if not packet[3] & 0x10:  # no payload
+                    continue
+                pid = ((packet[1] & 0x1f) << 8) | packet[2]
+                data = packet[5 + packet[4]:] if packet[3] & 0x20 else packet[4:]
+                if packet[1] & 0x40:  # beginning of a PES packet
+                    if not data.startswith(b"\0\0\x01\xe0") or not data[7] & 0x80:
+                        continue
+                    video_pid = pid
+                    a, b, c, d, e = data[9:14]
+                    timestamps.append(((a & 0x0e) << 29) | (b << 22) | ((c & 0xfe) << 14)
+                                      | (d << 7) | (e >> 1))
+                    data = data[9 + data[8]:]
+                if pid == video_pid and len(timestamps) == 1:
+                    first_frame.extend(data)
+            nal_types = {value[0] & 0x1f for value in re.findall(rb"\0\0\x01(.)", first_frame, re.S)}
+            check({5, 7, 8} <= nal_types, f"segment {index} starts with H.264 parameter sets and an IDR frame")
+            assert timestamps, f"segment {index} contains no video timestamps"
+            duration = (max(timestamps) - min(timestamps)) / 90000 + 1 / 25
             check(abs(duration - durations[index]) < 0.15,
-                  f"segment {index} contains {duration:.2f}s of media (manifest: {durations[index]:.2f}s)")
-            return duration, start
+                  f"segment {index} contains {duration:.2f}s of video (manifest: {durations[index]:.2f}s)")
+            return min(timestamps) / 90000
 
         ahead = segment(4)
         if not check(ahead.status_code == 200 and ahead.headers.get("content-type") == "video/mp2t",
                      "requesting an ungenerated segment starts directly at the forward offset"):
             return
         check(session.start_segment == 4, "FFmpeg did not encode the first 16 seconds for that seek")
-        _, ahead_start = inspect_segment(4, ahead.content)
+        ahead_start = inspect_segment(4, ahead.content)
         tail = segment(6)
         if check(tail.status_code == 200, "the fractional last segment is playable"):
             inspect_segment(6, tail.content)
@@ -193,7 +208,7 @@ def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
         if not check(first.status_code == 200 and session.start_segment == 0,
                      "jumping backwards to an uncached segment restarts the encoder"):
             return
-        _, first_start = inspect_segment(0, first.content)
+        first_start = inspect_segment(0, first.content)
         check(abs(ahead_start - first_start - 16) < 0.15, "both FFmpeg runs encode on the same timestamp timeline")
         again = segment(4)
         check(again.status_code == 200 and again.content == ahead.content and session.start_segment == 0,
