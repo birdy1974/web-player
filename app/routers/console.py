@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..assets import templates
 from ..config import (
     ADMIN_USER, BASE_URL, LOG_LINES, LOG_LEVEL, LOG_MAX_BYTES, MEDIA_ROOT, PUBLIC_URL,
 )
@@ -33,7 +33,6 @@ from ..services.visibility import (
 log = logging.getLogger("web-player.console")
 
 router = APIRouter(tags=["console"])
-templates = Jinja2Templates(directory="app/templates")
 
 
 # --------------------------------------------------------------------------

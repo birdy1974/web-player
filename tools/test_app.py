@@ -8,8 +8,9 @@ it never touches the real installation.
 """
 from __future__ import annotations
 
-import os
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,11 +60,15 @@ os.environ.update({
     "WEB_PLAYER_ADMIN_PASSWORD": "admin-secret",
     "WEB_PLAYER_BASE_URL": "http://nas.local:8088",
     "WEB_PLAYER_LOG_LEVEL": "WARNING",
+    "WEB_PLAYER_TRANSCODE": "software",
+    "WEB_PLAYER_HLS_SEGMENT": "4",
 })
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.assets import asset_url  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import hls  # noqa: E402
 
 failures = 0
 
@@ -121,6 +126,100 @@ def start_file_server(directory: Path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
+    """Exercise the HTTP and real FFmpeg paths, not just the VOD manifest."""
+    print("\n== HLS startup and cold seeking ==")
+    sample = MEDIA / "hevc-seek.mkv"
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", "color=royalblue:s=320x180:r=25",
+        "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "24.5",
+        "-c:v", "libx265", "-preset", "ultrafast",
+        "-x265-params", "pools=1:frame-threads=1:keyint=250:scenecut=0:log-level=error",
+        "-c:a", "aac", str(sample),
+    ], capture_output=True, check=True)
+    r = client.post("/api/console/media", json={
+        "title": "HEVC seek test", "path": sample.name, "group_id": group_id,
+    })
+    if not check(r.status_code == 200, "the small HEVC fixture is added"):
+        return
+    media_id = r.json()["id"]
+    client.post("/player/login", data={"username": "family", "password": "family-secret"})
+    manifest = client.get(f"/player/stream/{media_id}/stream.m3u8")
+    if not check(manifest.status_code == 200 and manifest.headers.get("cache-control") == "no-store",
+                 "the HLS manifest is available but not cacheable by the browser"):
+        return
+    key = hls.session_key(media_id, user_id)
+    try:
+        durations = [float(value) for value in re.findall(r"^#EXTINF:([\d.]+),", manifest.text, re.M)]
+        check(len(durations) == 7 and durations[:6] == [4.0] * 6 and 0 < durations[-1] < 1,
+              f"the manifest has six full segments and a fractional tail ({durations})")
+        session = client.portal.call(lambda: hls._sessions[key])
+        check(not session.staging.exists(), "the manifest does not start FFmpeg at the beginning")
+
+        def segment(index: int):
+            return client.get(f"/player/segment/{media_id}/{index}.ts")
+
+        def inspect_segment(index: int, payload: bytes) -> float:
+            # Inspect the fixture's single MPEG-TS video stream directly.
+            # Some static FFmpeg builds crash when opening MPEG-TS as input.
+            video_pid = None
+            first_frame = bytearray()
+            timestamps = []
+            assert payload and len(payload) % 188 == 0, f"segment {index} is not complete MPEG-TS"
+            for offset in range(0, len(payload), 188):
+                packet = payload[offset:offset + 188]
+                assert packet[0] == 0x47, f"segment {index} lost MPEG-TS packet sync"
+                if not packet[3] & 0x10:  # no payload
+                    continue
+                pid = ((packet[1] & 0x1f) << 8) | packet[2]
+                data = packet[5 + packet[4]:] if packet[3] & 0x20 else packet[4:]
+                if packet[1] & 0x40:  # beginning of a PES packet
+                    if not data.startswith(b"\0\0\x01\xe0") or not data[7] & 0x80:
+                        continue
+                    video_pid = pid
+                    a, b, c, d, e = data[9:14]
+                    timestamps.append(((a & 0x0e) << 29) | (b << 22) | ((c & 0xfe) << 14)
+                                      | (d << 7) | (e >> 1))
+                    data = data[9 + data[8]:]
+                if pid == video_pid and len(timestamps) == 1:
+                    first_frame.extend(data)
+            nal_types = {value[0] & 0x1f for value in re.findall(rb"\0\0\x01(.)", first_frame, re.S)}
+            check({5, 7, 8} <= nal_types, f"segment {index} starts with H.264 parameter sets and an IDR frame")
+            assert timestamps, f"segment {index} contains no video timestamps"
+            duration = (max(timestamps) - min(timestamps)) / 90000 + 1 / 25
+            check(abs(duration - durations[index]) < 0.15,
+                  f"segment {index} contains {duration:.2f}s of video (manifest: {durations[index]:.2f}s)")
+            return min(timestamps) / 90000
+
+        ahead = segment(4)
+        if not check(ahead.status_code == 200 and ahead.headers.get("content-type") == "video/mp2t",
+                     "requesting an ungenerated segment starts directly at the forward offset"):
+            return
+        check(session.start_segment == 4, "FFmpeg did not encode the first 16 seconds for that seek")
+        ahead_start = inspect_segment(4, ahead.content)
+        tail = segment(6)
+        if check(tail.status_code == 200, "the fractional last segment is playable"):
+            inspect_segment(6, tail.content)
+
+        first = segment(0)
+        if not check(first.status_code == 200 and session.start_segment == 0,
+                     "jumping backwards to an uncached segment restarts the encoder"):
+            return
+        first_start = inspect_segment(0, first.content)
+        check(abs(ahead_start - first_start - 16) < 0.15, "both FFmpeg runs encode on the same timestamp timeline")
+        again = segment(4)
+        check(again.status_code == 200 and again.content == ahead.content and session.start_segment == 0,
+              "jumping to a cached segment reuses the bytes without restarting FFmpeg")
+        check(segment(-1).status_code == segment(len(durations)).status_code == 404,
+              "out-of-range segment requests do not start an encoder")
+
+        client.post("/player/login", data={"username": "stranger", "password": "s3cret"})
+        check(segment(4).status_code == 404, "even a cached HLS segment still checks the viewer's access")
+    finally:
+        client.portal.call(hls.drop_session, media_id, user_id)
 
 
 def main() -> int:
@@ -232,6 +331,9 @@ def main() -> int:
         r = client.post("/player/login", data={"username": "family", "password": "wrong"})
         check(r.status_code == 401 and 'id="player-startup"' not in r.text,
               "a wrong password is refused without showing the player")
+        check('id="login-submit" type="submit"' in r.text and 'role="alert"' in r.text,
+              "a failed sign-in returns an enabled form with an error")
+        check(asset_url("css/app.css") in r.text, "sign-in uses the shared versioned stylesheet")
         r = client.post("/player/login", data={"username": "family", "password": "family-secret"},
                         follow_redirects=False)
         check(r.status_code == 302 and r.headers.get("location") == "/player",
@@ -239,8 +341,32 @@ def main() -> int:
         r = client.get("/player")
         check(r.status_code == 200 and 'id="player-startup"' in r.text and 'id="player-content" hidden' in r.text,
               "the signed-in page serves the waiting screen before loading the playlist")
+        check(r.headers.get("cache-control") == "no-store", "the signed-in page is not cached")
+        check(all(asset_url(name) in r.text for name in (
+            "css/app.css", "js/player.js", "vendor/video.min.js", "vendor/video-js.min.css",
+        )), "the page requests versioned scripts and styles")
+
+        print("\n== public playback assets ==")
+        url = asset_url("vendor/video.min.js")
+        packed = client.get(url, headers={"Accept-Encoding": "gzip"})
+        plain = client.get(url, headers={"Accept-Encoding": "gzip;q=0, identity"})
+        check(packed.status_code == plain.status_code == 200 and packed.content == plain.content,
+              "compressed and identity responses deliver the same player script")
+        check(packed.headers.get("content-encoding") == "gzip" and "content-encoding" not in plain.headers,
+              "gzip is used only when accepted")
+        check(int(packed.headers["content-length"]) < int(plain.headers["content-length"]) / 2,
+              f"gzip cuts the player script from {len(plain.content):,} to {packed.headers['content-length']} bytes")
+        check("immutable" in packed.headers.get("cache-control", "")
+              and packed.headers.get("vary") == "Accept-Encoding" and "set-cookie" not in packed.headers,
+              "versioned assets can be cached and do not refresh a private session cookie")
+        r = client.get(url, headers={"Accept-Encoding": "gzip", "If-None-Match": packed.headers["etag"]})
+        check(r.status_code == 304 and not r.content, "a matching asset ETag revalidates without bytes")
+        r = client.get("/static/vendor/video.min.js?v=old")
+        check("immutable" not in r.headers.get("cache-control", ""), "a stale version is not cached as immutable")
+
         r = client.get("/api/player/playlist")
         check(r.status_code == 200, "the playlist answers")
+        check(r.headers.get("cache-control") == "no-store", "the per-account playlist is not cached")
         playlist = r.json()["items"]
         check(len(playlist) == 1, f"the family sees the one shared item ({len(playlist)})")
         check(playlist[0]["src"].startswith("/player/stream/"), "the item carries a stream URL")
@@ -265,9 +391,13 @@ def main() -> int:
         check(playlist[0].get("mime") == r.headers.get("content-type", "").split(";")[0],
               f"the type the player is told is the type the server sends "
               f"({playlist[0].get('mime')} / {r.headers.get('content-type')})")
-        r = client.get(f"/player/stream/{media_id}/direct", headers={"Range": "bytes=0-1023"})
+        r = client.get(f"/player/stream/{media_id}/direct", headers={
+            "Range": "bytes=0-1023", "Accept-Encoding": "gzip",
+        })
         check(r.status_code == 206, f"a Range request answers 206 ({r.status_code})")
         check(len(r.content) == 1024, f"the Range request returns the right number of bytes ({len(r.content)})")
+        check("content-encoding" not in r.headers and r.headers.get("cache-control") == "no-store",
+              "the static asset optimization never compresses or publicly caches media")
 
         print("\n== an item that is not shared is not streamable ==")
         client.post("/player/logout")
@@ -497,6 +627,8 @@ def main() -> int:
         r = client.get("/api/console/logs")
         check(r.status_code == 401, f"the log is private ({r.status_code})")
         client.post("/console/login", data={"username": "admin", "password": "admin-secret"})
+
+        check_hls_seek(client, movies_id, family_id)
 
     shutil.rmtree(TMP, ignore_errors=True)
     print("\n" + ("ALL TESTS PASSED" if failures == 0 else f"{failures} FAILURE(S)"))

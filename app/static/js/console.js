@@ -178,10 +178,9 @@
     }
     if (delivery === 'direct') out += `<span class="badge ok" title="served with HTTP Range — exact seeking, 0 % CPU">direct</span>`;
     else if (delivery === 'hls') {
-      const vaapi = ['hevc', 'vp9', 'av1'].indexOf(String((m.probe || {}).video || '').toLowerCase()) !== -1;
-      out += vaapi
-        ? `<span class="badge warn" title="VAAPI transcode to 1080p H.264">HLS · VAAPI</span>`
-        : `<span class="badge warn" title="ffmpeg remux to segmented HLS — 0 % CPU, copy">HLS · remux</span>`;
+      const probe = m.probe || {};
+      const audioOnly = probe.audio && !probe.video;
+      out += `<span class="badge warn" title="On-demand HLS with seekable segments">HLS · ${audioOnly ? 'AAC' : 'H.264'}</span>`;
     } else out += `<span class="badge purple">embed</span>`;
     return out;
   }
@@ -1032,8 +1031,8 @@
         <tr><td>HLS segment</td><td>${esc(vaapi.segment_seconds || '—')} s</td></tr>
       </tbody></table>
       <p style="margin-top:10px">${vaapi.available
-        ? 'The DS918+ encodes H.264 with its Intel HD Graphics 500; a 4K HEVC source is transcoded to 1080p H.264, one stream at a time.'
-        : 'No /dev/dri in this container — ffmpeg falls back to libx264 (CPU only). Add <span class="mono">devices: [/dev/dri:/dev/dri]</span> to the compose file to enable VAAPI.'}</p>`;
+        ? 'The DS918+ can encode HLS video to H.264 with its Intel HD Graphics 500. Direct files play without encoding.'
+        : 'VAAPI encoding is not available. In auto mode, ffmpeg uses libx264 (CPU only). Check that <span class="mono">/dev/dri</span> is passed into the container and that its render device is accessible.'}</p>`;
   }
 
   /* ------------------------------------------------------------------ */

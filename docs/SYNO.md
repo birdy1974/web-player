@@ -18,13 +18,15 @@ built for `linux/amd64` — the DS918+ is an Intel Celeron J3455 (Apollo Lake).
 
 * **decode**: H.264, HEVC (8- and 10-bit), VP9, VC-1 — fine
 * **encode**: **H.264 only**. There is no HEVC encoder in this chip
-* so a 4K HEVC movie is **transcoded to 1080p H.264** for the browser, and a
-  1080p H.264 movie is **copied** (no CPU at all)
-* one transcode at a time. A second one queues behind it
+* browser-compatible files such as H.264/AAC MP4 play **directly**, without
+  encoding on the NAS. Other video sent as **on-demand HLS** is encoded to
+  H.264, even if the source is already H.264: its original keyframes may
+  not match the seekable HLS segment boundaries.
 
-Without `/dev/dri` the container still works — ffmpeg falls back to libx264
-(slower, but correct). The console's *Settings → Hardware* tells you which mode
-you are in.
+In auto mode, the container uses libx264 if VAAPI encoding isn't available.
+The console's *Settings → Hardware* shows the mode. If the NAS or its upload
+connection is the bottleneck, a lower-bitrate, fast-start MP4 copy can play
+directly and avoids real-time encoding.
 
 ---
 
@@ -118,7 +120,7 @@ points at). Two things matter:
 
 Then, in the console: **Media library → Scan media root**. Every video file
 that is not in the library yet is added, `ffprobe`d, given a poster frame and
-classified as *direct* (playable as it is) or *HLS* (needs a remux/transcode).
+classified as *direct* (playable as it is) or *HLS* (encoded on demand).
 
 ### Picking the files (the file browser)
 
@@ -312,7 +314,7 @@ sudo docker exec web-player tail -n 200 /config/web-player.log
 | the player shows nothing | the user has no group and no per-item grant — check *Dashboard → what each user can watch* |
 | *No compatible source was found for this media* | the browser refused the file. The type now travels with the source and the player switches by itself to the on-demand HLS stream; if that fails too, the file's codec is not supported by ffmpeg either — check the *delivery* of the item in the console (set it to *HLS* by hand) |
 | `yt-dlp` fails | YouTube changed something; the console shows the exact error. Update the image (`docker compose build --pull`) |
-| the browser will not seek in an MKV | it is served as HLS, so the jump is accurate to one segment (4 s by default, `WEB_PLAYER_HLS_SEGMENT`) |
+| starting or jumping in an HLS movie is slow | check **Settings → Hardware** and the time between `hls start` and `hls segment ready` in **Logs**. An uncached jump must encode a segment (4 s of video by default); a cached segment can be reused. If the segment is ready but takes a long time to download, check the NAS's upload speed and the remote connection. |
 | something does not work and I do not know why | open **Console → *Logs*** (or `docker logs web-player`) — every request, every change and every failure is written down; see §7 |
 
 ---

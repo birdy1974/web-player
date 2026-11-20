@@ -56,6 +56,11 @@ async function until(predicate, message) {
   }
 }
 
+function template(name) {
+  return fs.readFileSync(path.join(APP, 'templates', name), 'utf8')
+    .replace(/\{\{ asset_url\('([^']+)'\) \}\}/g, '/static/$1?v=test-version');
+}
+
 function makeDom() {
   const vc = new VirtualConsole();
   const errors = [];
@@ -66,7 +71,7 @@ function makeDom() {
   const playlist = Promise.withResolvers();
   const assets = { [VIDEO_JS]: Promise.withResolvers(), [VIDEO_CSS]: Promise.withResolvers() };
   let playCalls = 0;
-  const dom = new JSDOM(fs.readFileSync(path.join(APP, 'templates/player.html'), 'utf8'), {
+  const dom = new JSDOM(template('player.html'), {
     url: 'http://localhost:8088/player',
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -102,6 +107,27 @@ function makeDom() {
 }
 
 (async () => {
+  console.log('\n== the sign-in form responds immediately ==');
+  {
+    const { window: win } = new JSDOM(template('login.html').replace('{{ action }}', '/player/login'), {
+      url: 'http://localhost:8088/player/login', runScripts: 'dangerously',
+    });
+    const button = win.document.querySelector('#login-submit');
+    const status = win.document.querySelector('#login-status');
+    const submit = () => button.form.dispatchEvent(new win.SubmitEvent('submit', {
+      bubbles: true, cancelable: true, submitter: button,
+    }));
+    check(submit() && button.form.method === 'post' && button.form.action.endsWith('/player/login'),
+      'the first submit is still the normal form POST');
+    check(button.disabled && button.textContent === 'Signing in…' && status.textContent === 'Signing in…',
+      'pending feedback is visible and announced before the network replies');
+    check(!submit(), 'a second submit is blocked while signing in');
+    win.dispatchEvent(new win.PageTransitionEvent('pageshow', { persisted: true }));
+    check(!button.disabled && button.textContent === 'Sign in' && status.textContent === '',
+      'returning with the browser Back button resets the form');
+    win.close();
+  }
+
   console.log('\n== the startup screen waits for the playlist and playback assets ==');
   {
     const { win, errors, requests, playCalls, sendPlaylist, sendAssets } = makeDom();

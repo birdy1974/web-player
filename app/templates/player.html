@@ -7,8 +7,8 @@
 <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
 <link rel="alternate icon" href="/static/brand/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
-<link rel="stylesheet" href="/static/css/app.css">
-<script defer src="/static/js/player.js?v=3"></script>
+<link rel="stylesheet" href="{{ asset_url('css/app.css') }}">
+<script defer src="{{ asset_url('js/player.js') }}"></script>
 <style>
   .player-startup { display: grid; place-items: center; min-height: calc(100vh - 140px); }
   .player-startup .card { width: min(380px, 100%); padding: 26px 20px; box-shadow: var(--shadow); }
@@ -77,7 +77,9 @@
   </header>
 
   <main class="page">
-    <section class="player-startup" id="player-startup" aria-labelledby="startup-title">
+    <section class="player-startup" id="player-startup" aria-labelledby="startup-title"
+             data-video-js="{{ asset_url('vendor/video.min.js') }}"
+             data-video-css="{{ asset_url('vendor/video-js.min.css') }}">
       <div class="card center">
         <div class="player-spinner" id="startup-spinner" aria-hidden="true"></div>
         <h1 id="startup-title">Loading your player…</h1>

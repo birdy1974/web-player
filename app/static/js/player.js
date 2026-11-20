@@ -55,11 +55,12 @@
   /* startup and playlist                                               */
   /* ------------------------------------------------------------------ */
   function loadPlaybackAssets() {
+    const { videoJs, videoCss } = $('#player-startup').dataset;
     const css = document.createElement('link');
     css.rel = 'stylesheet';
-    css.href = '/static/vendor/video-js.min.css';
+    css.href = videoCss;
     const js = document.createElement('script');
-    js.src = '/static/vendor/video.min.js';
+    js.src = videoJs;
 
     // Load both without blocking the waiting screen's first paint.
     return Promise.all([css, js].map(asset => new Promise((resolve, reject) => {

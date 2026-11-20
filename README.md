@@ -33,7 +33,7 @@ web-player/
 
 * The media library: local files on the NAS, direct URLs and YouTube links.
   A background `ffprobe` classifies every item as **direct** (playable as it
-  is, 0 % CPU) or **HLS** (needs a remux / VAAPI transcode).
+  is, no transcoding) or **HLS** (encoded on demand for browser playback).
 * **A file browser for the NAS**: *Browse files…* opens an explorer over the
   media root — folders, breadcrumbs, a filter. Pick a file for an item, or
   put a file or a whole folder into the library without typing a path.
@@ -51,12 +51,16 @@ web-player/
 
 **② Public web player — password protected** (`/player`)
 
-* After sign-in, a waiting screen appears while the signed-in user's playlist and the player controls
-  load in parallel. The first title is selected, but no video is loaded until you press **Play** or
-  choose a title from the playlist. On mobile, the playlist sits directly below the video.
+* The sign-in form shows **Signing in…** immediately. After sign-in, the waiting screen stays up
+  while the playlist and player controls load in parallel. The player scripts and styles are
+  compressed and versioned for browser caching; the account's playlist isn't cached. The first
+  title is selected, but no video is loaded until you press **Play** or choose a title from the
+  playlist. On mobile, the playlist sits directly below the video.
 * Video.js: play/pause, ±10 s, speed, picture-in-picture, fullscreen, keyboard control.
-* **Jump to a timestamp** (`01:23:45`) — exact for a progressive file, accurate
-  to one segment (4 s) for an on-demand HLS stream.
+* **Jump to a timestamp** (`01:23:45`) — exact for a progressive file. For on-demand HLS,
+  FFmpeg encodes video to H.264 with a new keyframe at each segment boundary (4 s by default).
+  Uncached jumps start encoding at that offset; already-generated segments are reused. Use a
+  browser-compatible MP4 for direct playback without encoding on the NAS.
 * **Download the file** — the button next to the title hands over the *original*
   file (an MKV stays an MKV).
   * A file on the NAS is streamed by the NAS: our file name, `Range` support,
