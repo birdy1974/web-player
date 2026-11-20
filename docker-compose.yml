@@ -39,6 +39,8 @@ services:
       WEB_PLAYER_BASE_URL: ${WEB_PLAYER_BASE_URL:-}
       # "vaapi" | "software" | "auto"
       WEB_PLAYER_TRANSCODE: ${WEB_PLAYER_TRANSCODE:-auto}
+      # "bitrate" | "cqp" (hardware constant quality, no bitrate cap)
+      WEB_PLAYER_VAAPI_RATE_CONTROL: ${WEB_PLAYER_VAAPI_RATE_CONTROL:-bitrate}
       WEB_PLAYER_HLS_SEGMENT: ${WEB_PLAYER_HLS_SEGMENT:-4}
       WEB_PLAYER_MAX_STREAMS: ${WEB_PLAYER_MAX_STREAMS:-3}
       # How much the application tells: DEBUG | INFO | WARNING | ERROR

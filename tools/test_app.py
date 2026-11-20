@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -159,6 +159,7 @@ def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
         check(len(durations) == 7 and durations[:6] == [4.0] * 6 and 0 < durations[-1] < 1,
               f"the manifest has six full segments and a fractional tail ({durations})")
         session = client.portal.call(lambda: hls._sessions[key])
+        check(session.video_pix_fmt == "yuv420p", "ffprobe passes the pixel format to the HLS session")
         check(not session.staging.exists(), "the manifest does not start FFmpeg at the beginning")
 
         def segment(index: int):
@@ -224,62 +225,76 @@ def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
         client.portal.call(hls.drop_session, media_id, user_id)
 
 
-def check_vaapi_fallback(client: TestClient, media_id: int, user_id: int) -> None:
-    print("\n== recovery from a VAAPI encoding failure ==")
+def check_vaapi_pipeline(client: TestClient, media_id: int, user_id: int) -> None:
+    print("\n== VAAPI commands and diagnostics ==")
+    session = hls.HLSSession(
+        media_id=media_id, user_id=user_id, source="/media/family movie.mkv",
+        duration=120, seg_seconds=4, total_segments=30, directory=TMP / "vaapi",
+        video_codec="h264", video_pix_fmt="yuv420p", mode="vaapi",
+    )
+
+    def value(command, option):
+        return command[command.index(option) + 1] if option in command else None
+
+    with patch.object(hls, "VAAPI_RATE_CONTROL", "cqp"):
+        first, seek = (hls._command(session, index) for index in (0, 15))
+        for label, cmd in (("startup", first), ("seek", seek)):
+            check(value(cmd, "-hwaccel") == value(cmd, "-hwaccel_output_format") == "vaapi"
+                  and value(cmd, "-c:v") == "h264_vaapi" and "-vf" not in cmd,
+                  f"{label} passes H.264 decoder surfaces straight to the VAAPI encoder")
+            check(value(cmd, "-rc_mode") == "CQP" and value(cmd, "-qp") == "23"
+                  and not {"-b:v", "-maxrate", "-bufsize", "-low_power"}.intersection(cmd),
+                  f"{label} uses the CQP profile without requesting a bitrate or forcing an entry point")
+        check("-ss" not in first and value(seek, "-ss") == "60.000" and seek.index("-ss") < seek.index("-i")
+              and value(seek, "-output_ts_offset") == "60.000" and value(seek, "-start_number") == "15"
+              and value(first, "-force_key_frames") == value(seek, "-force_key_frames") == "expr:gte(t,n_forced*4)",
+              "hardware CQP preserves the segment grid and seek timestamps")
+
+    with patch.object(hls, "VAAPI_RATE_CONTROL", "bitrate"):
+        capped = hls._command(session, 0)
+        check(value(capped, "-b:v") == "4000k" and value(capped, "-maxrate") == "4500k"
+              and value(capped, "-bufsize") == "8000k" and "-rc_mode" not in capped,
+              "the default VAAPI profile keeps its bitrate controls")
+        for codec, pix_fmt, expected in (
+            ("h264", None, None),
+            ("hevc", "yuv420p", None),
+            ("hevc", "yuv420p10le", "scale_vaapi=format=nv12"),
+            ("av1", "yuv420p", "format=nv12,hwupload"),
+        ):
+            cmd = hls._command(replace(session, video_codec=codec, video_pix_fmt=pix_fmt), 0)
+            check(value(cmd, "-vf") == expected, f"{codec}/{pix_fmt or 'legacy probe'} filter: {expected or 'none'}")
+
     client.post("/player/login", data={"username": "family", "password": "family-secret"})
     client.portal.call(hls.drop_session, media_id, user_id)
-    calls = []
+    encoders = []
     real_spawn = hls.asyncio.create_subprocess_exec
 
     async def spawn(*cmd, **kwargs):
-        calls.append(cmd)
+        encoders.append(value(cmd, "-c:v"))
         if "h264_vaapi" in cmd:
-            # Exercise a real non-zero subprocess exit on CPU-only CI runners.
+            # Simulate a failing GPU on CPU-only CI runners.
             return await real_spawn(sys.executable, "-c", (
-                "import sys, time; time.sleep(0.15); "
-                "print('Failed to allocate VAAPI surface\\nError while processing the decoded data', "
-                "file=sys.stderr); sys.exit(1)"
+                "import sys; print('Failed to create processing pipeline config\\n"
+                "Error while processing the decoded data', file=sys.stderr); sys.exit(1)"
             ), **kwargs)
         return await real_spawn(*cmd, **kwargs)
 
-    def encoders():
-        return [cmd[cmd.index("-c:v") + 1] for cmd in calls]
-
-    def segment(index: int):
-        return client.get(f"/player/segment/{media_id}/{index}.ts")
-
     with (
         patch.object(hls, "vaapi_available", return_value=True),
+        patch.object(hls, "VAAPI_RATE_CONTROL", "cqp"),
         patch.object(hls.asyncio, "create_subprocess_exec", new=spawn),
     ):
-        try:
-            with patch.object(hls, "TRANSCODE_MODE", "auto"):
-                with ThreadPoolExecutor(max_workers=2) as requests:
-                    # Start from an uncached offset so segment 0 still needs a restart later.
-                    pending = [requests.submit(segment, 1) for _ in range(2)]
-                    a, b = [job.result(timeout=40) for job in pending]
-                check(a.status_code == b.status_code == 200 and a.content and a.content == b.content,
-                      "both waiting HTTP requests receive a real segment from the software retry")
-                check(encoders() == ["h264_vaapi", "libx264"], "concurrent requests share one software retry")
-                check(len(calls) == 2 and all("-ss" in cmd and cmd[cmd.index("-ss") + 1] == "4.000" for cmd in calls),
-                      "the retry keeps the original seek offset")
-                check(bool(calls) and "-low_power" not in calls[0], "VAAPI is not forced into low-power encoding")
-                r = segment(0)
-                check(r.status_code == 200 and r.content and encoders() == ["h264_vaapi", "libx264", "libx264"],
-                      "a later uncached jump stays on software for this movie session")
-        finally:
-            client.portal.call(hls.drop_session, media_id, user_id)
+        for mode in ("vaapi", "auto"):
+            try:
+                with patch.object(hls, "TRANSCODE_MODE", mode):
+                    r = client.get(f"/player/segment/{media_id}/0.ts")
+                check(r.status_code == 504 and encoders == ["h264_vaapi"],
+                      f"{mode} does not silently start a CPU encoder after a VAAPI failure")
+            finally:
+                client.portal.call(hls.drop_session, media_id, user_id)
+                encoders.clear()
 
-        calls.clear()
-        try:
-            with patch.object(hls, "TRANSCODE_MODE", "vaapi"):
-                r = segment(0)
-                check(r.status_code == 504 and encoders() == ["h264_vaapi"],
-                      "explicitly forced VAAPI still fails without starting a software encoder")
-        finally:
-            client.portal.call(hls.drop_session, media_id, user_id)
-
-    records = client.get("/api/console/logs", params={"search": "Failed to allocate VAAPI surface"}).json()
+    records = client.get("/api/console/logs", params={"search": "Failed to create processing pipeline config"}).json()
     check(bool(records.get("records")), "the admin log includes the driver diagnostic, not just the last error line")
 
 
@@ -690,7 +705,7 @@ def main() -> int:
         client.post("/console/login", data={"username": "admin", "password": "admin-secret"})
 
         check_hls_seek(client, movies_id, family_id)
-        check_vaapi_fallback(client, media_id, family_id)
+        check_vaapi_pipeline(client, media_id, family_id)
 
     shutil.rmtree(TMP, ignore_errors=True)
     print("\n" + ("ALL TESTS PASSED" if failures == 0 else f"{failures} FAILURE(S)"))

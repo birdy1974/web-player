@@ -23,16 +23,31 @@ built for `linux/amd64` — the DS918+ is an Intel Celeron J3455 (Apollo Lake).
   H.264, even if the source is already H.264: its original keyframes may
   not match the seekable HLS segment boundaries.
 
-In auto mode, the container prefers VAAPI. If FFmpeg exits with a VAAPI error,
-the same HLS segment request retries with libx264, and later seeks in that
-movie session stay on software. This doesn't disable hardware acceleration
-for other movies. `WEB_PLAYER_TRANSCODE=vaapi` requires hardware and doesn't
-retry in software; `WEB_PLAYER_TRANSCODE=software` bypasses it entirely.
+In auto mode, the container uses VAAPI when available and libx264 otherwise.
+`WEB_PLAYER_TRANSCODE=vaapi` requires hardware encoding and never switches to
+libx264. Already compatible 8-bit frames from the VAAPI decoder go straight to
+the GPU encoder; sources that need pixel format conversion (such as 10-bit
+HEVC) still need the driver's video-processing support.
 
-The console's *Settings → Hardware* shows the preferred mode; the **Logs**
-tab shows the encoder actually used for each movie. If the NAS or its upload
-connection is the bottleneck, a lower-bitrate, fast-start MP4 copy can play
-directly and avoids real-time encoding.
+**If the NAS reports `supported modes: CQP`**, its VAAPI encoder cannot honor
+the default bitrate settings. Use the updated image and Compose file, and set
+these values in the project's `.env`:
+
+```dotenv
+WEB_PLAYER_TRANSCODE=vaapi
+WEB_PLAYER_VAAPI_RATE_CONTROL=cqp
+```
+
+CQP uses hardware encoding at constant quality (QP 23). It does **not** enforce
+the default 4.5 Mb/s video cap; output rates vary with the scene. Startup and
+seeks use the same settings. Leave the rate control at `bitrate` on drivers that
+support the bitrate cap, particularly if the NAS uplink is limited.
+
+Recreate the container from the project folder after changing `.env`:
+`sudo docker compose up -d --no-build --force-recreate web-player`.
+A restart alone won't apply environment changes. The console's *Settings →
+Hardware* shows the preferred mode, and **Logs** records `mode=vaapi` and
+`rate_control=cqp` (or `bitrate`) at each VAAPI start.
 
 ---
 
@@ -314,7 +329,7 @@ sudo docker exec web-player tail -n 200 /config/web-player.log
 |---|---|
 | `PermissionError: '/media'` | `PUID`/`PGID` in `.env` do not match the owner of the media folder (`stat -c '%u:%g' <dir>`) |
 | *no VAAPI* in Settings → Hardware | `/dev/dri` is not passed to the container, or the `render` group is not joined (the entrypoint does it when the device exists) |
-| HLS segment returns `504` after a VAAPI error | In auto mode, look for `retrying ... with libx264` in **Logs**. To bypass hardware, set `WEB_PLAYER_TRANSCODE=software` in the project's `.env` and run `sudo docker compose up -d --no-build --force-recreate web-player` from the project folder. A restart alone does not apply an environment change. |
+| HLS segment returns `504` after a VAAPI error | Check **Logs** for the first FFmpeg diagnostic. If it reports `supported modes: CQP`, follow the CQP setup above to keep hardware decoding and encoding for compatible sources. If `scale_vaapi` fails on a source that needs conversion, check the driver's VAAPI video-processing support. |
 | ffmpeg is missing | the image was built without the Debian `contrib`/`non-free` sources — rebuild, or install ffmpeg in the image yourself |
 | a file plays black on the box | the service type does not match the container: `4097` cannot demux Matroska, use `5002` |
 | the box does not show the new bouquet | the service list was not reloaded — `curl "http://<box-ip>/web/servicelistreload?mode=2"` |
