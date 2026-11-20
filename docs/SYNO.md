@@ -23,8 +23,14 @@ built for `linux/amd64` — the DS918+ is an Intel Celeron J3455 (Apollo Lake).
   H.264, even if the source is already H.264: its original keyframes may
   not match the seekable HLS segment boundaries.
 
-In auto mode, the container uses libx264 if VAAPI encoding isn't available.
-The console's *Settings → Hardware* shows the mode. If the NAS or its upload
+In auto mode, the container prefers VAAPI. If FFmpeg exits with a VAAPI error,
+the same HLS segment request retries with libx264, and later seeks in that
+movie session stay on software. This doesn't disable hardware acceleration
+for other movies. `WEB_PLAYER_TRANSCODE=vaapi` requires hardware and doesn't
+retry in software; `WEB_PLAYER_TRANSCODE=software` bypasses it entirely.
+
+The console's *Settings → Hardware* shows the preferred mode; the **Logs**
+tab shows the encoder actually used for each movie. If the NAS or its upload
 connection is the bottleneck, a lower-bitrate, fast-start MP4 copy can play
 directly and avoids real-time encoding.
 
@@ -308,6 +314,7 @@ sudo docker exec web-player tail -n 200 /config/web-player.log
 |---|---|
 | `PermissionError: '/media'` | `PUID`/`PGID` in `.env` do not match the owner of the media folder (`stat -c '%u:%g' <dir>`) |
 | *no VAAPI* in Settings → Hardware | `/dev/dri` is not passed to the container, or the `render` group is not joined (the entrypoint does it when the device exists) |
+| HLS segment returns `504` after a VAAPI error | In auto mode, look for `retrying ... with libx264` in **Logs**. To bypass hardware, set `WEB_PLAYER_TRANSCODE=software` in the project's `.env` and run `sudo docker compose up -d --no-build --force-recreate web-player` from the project folder. A restart alone does not apply an environment change. |
 | ffmpeg is missing | the image was built without the Debian `contrib`/`non-free` sources — rebuild, or install ffmpeg in the image yourself |
 | a file plays black on the box | the service type does not match the container: `4097` cannot demux Matroska, use `5002` |
 | the box does not show the new bouquet | the service list was not reloaded — `curl "http://<box-ip>/web/servicelistreload?mode=2"` |

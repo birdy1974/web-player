@@ -15,7 +15,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -220,6 +222,65 @@ def check_hls_seek(client: TestClient, group_id: int, user_id: int) -> None:
         check(segment(4).status_code == 404, "even a cached HLS segment still checks the viewer's access")
     finally:
         client.portal.call(hls.drop_session, media_id, user_id)
+
+
+def check_vaapi_fallback(client: TestClient, media_id: int, user_id: int) -> None:
+    print("\n== recovery from a VAAPI encoding failure ==")
+    client.post("/player/login", data={"username": "family", "password": "family-secret"})
+    client.portal.call(hls.drop_session, media_id, user_id)
+    calls = []
+    real_spawn = hls.asyncio.create_subprocess_exec
+
+    async def spawn(*cmd, **kwargs):
+        calls.append(cmd)
+        if "h264_vaapi" in cmd:
+            # Exercise a real non-zero subprocess exit on CPU-only CI runners.
+            return await real_spawn(sys.executable, "-c", (
+                "import sys, time; time.sleep(0.15); "
+                "print('Failed to allocate VAAPI surface\\nError while processing the decoded data', "
+                "file=sys.stderr); sys.exit(1)"
+            ), **kwargs)
+        return await real_spawn(*cmd, **kwargs)
+
+    def encoders():
+        return [cmd[cmd.index("-c:v") + 1] for cmd in calls]
+
+    def segment(index: int):
+        return client.get(f"/player/segment/{media_id}/{index}.ts")
+
+    with (
+        patch.object(hls, "vaapi_available", return_value=True),
+        patch.object(hls.asyncio, "create_subprocess_exec", new=spawn),
+    ):
+        try:
+            with patch.object(hls, "TRANSCODE_MODE", "auto"):
+                with ThreadPoolExecutor(max_workers=2) as requests:
+                    # Start from an uncached offset so segment 0 still needs a restart later.
+                    pending = [requests.submit(segment, 1) for _ in range(2)]
+                    a, b = [job.result(timeout=40) for job in pending]
+                check(a.status_code == b.status_code == 200 and a.content and a.content == b.content,
+                      "both waiting HTTP requests receive a real segment from the software retry")
+                check(encoders() == ["h264_vaapi", "libx264"], "concurrent requests share one software retry")
+                check(len(calls) == 2 and all("-ss" in cmd and cmd[cmd.index("-ss") + 1] == "4.000" for cmd in calls),
+                      "the retry keeps the original seek offset")
+                check(bool(calls) and "-low_power" not in calls[0], "VAAPI is not forced into low-power encoding")
+                r = segment(0)
+                check(r.status_code == 200 and r.content and encoders() == ["h264_vaapi", "libx264", "libx264"],
+                      "a later uncached jump stays on software for this movie session")
+        finally:
+            client.portal.call(hls.drop_session, media_id, user_id)
+
+        calls.clear()
+        try:
+            with patch.object(hls, "TRANSCODE_MODE", "vaapi"):
+                r = segment(0)
+                check(r.status_code == 504 and encoders() == ["h264_vaapi"],
+                      "explicitly forced VAAPI still fails without starting a software encoder")
+        finally:
+            client.portal.call(hls.drop_session, media_id, user_id)
+
+    records = client.get("/api/console/logs", params={"search": "Failed to allocate VAAPI surface"}).json()
+    check(bool(records.get("records")), "the admin log includes the driver diagnostic, not just the last error line")
 
 
 def main() -> int:
@@ -629,6 +690,7 @@ def main() -> int:
         client.post("/console/login", data={"username": "admin", "password": "admin-secret"})
 
         check_hls_seek(client, movies_id, family_id)
+        check_vaapi_fallback(client, media_id, family_id)
 
     shutil.rmtree(TMP, ignore_errors=True)
     print("\n" + ("ALL TESTS PASSED" if failures == 0 else f"{failures} FAILURE(S)"))

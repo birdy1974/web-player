@@ -2,9 +2,10 @@
 
 The VOD playlist is available before any media is encoded. FFmpeg starts
 where the browser first asks for a segment and restarts at an uncached seek.
-The encoder and keyframe grid stay the same on every start: a stream copy
-could only split at the source's keyframes, which need not be on that grid.
-Files playable directly in the browser bypass this service entirely.
+The H.264 codec and keyframe grid stay the same on every start, even if
+VAAPI fails and auto mode retries in software. A stream copy could only
+split at the source's keyframes, which need not be on that grid. Files
+playable directly in the browser bypass this service entirely.
 """
 from __future__ import annotations
 
@@ -81,6 +82,7 @@ class HLSSession:
     next_segment: int = 0
     proc: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
+    fallback_from: asyncio.subprocess.Process | None = None
     last_access: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     failed: str = ""
@@ -154,10 +156,11 @@ def _command(session: HLSSession, index: int) -> list[str]:
     else:
         cmd += ["-map", "0:v:0?", "-map", "0:a:0?"]
         if session.mode == "vaapi":
+            # Let FFmpeg choose an encoding entry point the driver supports;
+            # forcing the low-power entry point excludes some VAAPI devices.
             cmd += [
                 "-vf", "scale_vaapi=format=nv12" if hw_decode else "format=nv12,hwupload",
                 "-c:v", "h264_vaapi", "-b:v", "4000k", "-maxrate", "4500k", "-bufsize", "8000k",
-                "-low_power", "1",
             ]
         else:
             cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]
@@ -237,16 +240,20 @@ async def _start(session: HLSSession, index: int) -> None:
     async def watch() -> None:
         _, err = await proc.communicate()
         if session.proc is proc and proc.returncode not in (0, None):
-            message = err.decode("utf-8", "replace").strip().splitlines()
-            session.failed = message[-1][:300] if message else "ffmpeg stopped"
-            log.warning("hls ffmpeg for media=%s stopped (code %s): %s",
-                        session.media_id, proc.returncode, session.failed)
+            lines = err.decode("utf-8", "replace").strip().splitlines()
+            session.failed = lines[-1][:300] if lines else "ffmpeg stopped"
+            # The last line is often only "Error while processing decoded
+            # data". Keep the preceding driver/filter error in the admin log.
+            diagnostic = " | ".join(lines[:4])[:800] or session.failed
+            log.warning("hls ffmpeg for media=%s stopped (mode %s, code %s): %s",
+                        session.media_id, session.mode, proc.returncode, diagnostic)
 
     session.task = asyncio.create_task(watch())
 
 
 async def _stop_process(session: HLSSession) -> None:
     proc, session.proc = session.proc, None
+    session.fallback_from = None
     if proc is not None and proc.returncode is None:
         try:
             proc.kill()
@@ -256,6 +263,28 @@ async def _stop_process(session: HLSSession) -> None:
     if session.task:
         session.task.cancel()
         session.task = None
+
+
+def _vaapi_failed(session: HLSSession) -> bool:
+    """Only fall back when the current encoder failed in automatic mode."""
+    return (session.mode == "vaapi" and TRANSCODE_MODE != "vaapi"
+            and session.proc is not None and session.proc.returncode not in (0, None))
+
+
+async def _retry_in_software(session: HLSSession, index: int) -> None:
+    """Restart once with libx264. Only called with session.lock held."""
+    failed = session.proc
+    if session.task is not None:
+        await asyncio.shield(session.task)  # consume FFmpeg's diagnostic before restarting
+    _advance_encoder(session)
+    if session.next_segment <= index <= session.next_segment + READ_AHEAD:
+        # Let nearby requests share the retry from the first unencoded segment.
+        index = session.next_segment
+    session.mode = "software"
+    log.warning("hls VAAPI failed: media=%s user=%s; retrying at %.1fs with libx264",
+                session.media_id, session.user_id, session.segment_time(index))
+    await _start(session, index)
+    session.fallback_from = failed
 
 
 async def ensure_segment(session: HLSSession, index: int) -> Path | None:
@@ -268,8 +297,12 @@ async def ensure_segment(session: HLSSession, index: int) -> Path | None:
         path = _ready_segment(session, index)
         if path is not None:
             return path
-        if (not session.alive() or index < session.start_segment
-                or index > session.next_segment + READ_AHEAD):
+        if _vaapi_failed(session):
+            await _retry_in_software(session, index)
+        elif (
+            not session.alive() or index < session.start_segment
+            or index > session.next_segment + READ_AHEAD
+        ):
             if session.alive():
                 log.info("hls seek: media=%s segment=%s (encoder at %s)",
                          session.media_id, index, session.next_segment)
@@ -284,12 +317,25 @@ async def ensure_segment(session: HLSSession, index: int) -> Path | None:
         if path is not None:
             log.info("hls segment ready: media=%s segment=%s", session.media_id, index)
             return path
-        if proc is None or session.proc is not proc or proc.returncode is not None:
-            return None
         if time.monotonic() >= deadline:
             log.warning("hls segment %s for media=%s took longer than %s s",
                         index, session.media_id, SEGMENT_TIMEOUT)
             return None
+        if proc is None:
+            return None
+        if session.proc is not proc or proc.returncode is not None:
+            async with session.lock:
+                path = _ready_segment(session, index)
+                if path is not None:
+                    return path
+                if session.proc is proc and _vaapi_failed(session):
+                    await _retry_in_software(session, index)
+                if session.fallback_from is proc and index >= session.start_segment:
+                    proc = session.proc
+                    continue
+                if session.proc is proc and session.task is not None:
+                    await asyncio.shield(session.task)
+                return None  # failed or superseded by a seek, not a software retry
         await asyncio.sleep(0.05)
 
 
